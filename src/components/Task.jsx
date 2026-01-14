@@ -6,12 +6,15 @@ import { parseMarkdown } from '../utils/markdown'
 /**
  * Task Component
  * Displays a single task card with title, description, priority, due date, category, and action buttons
+ * Supports selection for bulk operations
  * 
  * @param {Object} task - Task object containing id, title, description, priority, status, dueDate, category, comments
  * @param {Function} onEdit - Callback function to handle task editing
  * @param {Function} onDelete - Callback function to handle task deletion
+ * @param {boolean} isSelected - Whether the task is selected for bulk operations
+ * @param {Function} onToggleSelect - Callback to toggle task selection
  */
-const Task = ({ task, onEdit, onDelete }) => {
+const Task = ({ task, onEdit, onDelete, isSelected = false, onToggleSelect }) => {
   // Priority color mapping for visual indicators
   const priorityColors = {
     high: '#ef4444',    // Red for high priority
@@ -46,20 +49,36 @@ const Task = ({ task, onEdit, onDelete }) => {
   const commentCount = task.comments && task.comments.length > 0 ? task.comments.length : 0
 
   return (
-    <div className="task-card">
-      {/* Priority and Category badges */}
-      <div className="task-badges">
-        <div className="task-priority" style={{ backgroundColor: priorityColor }}>
-          {priorityLabel}
-        </div>
-        {category && (
-          <div 
-            className="task-category" 
-            style={{ backgroundColor: category.color }}
-          >
-            {category.name}
+    <div className={`task-card ${isSelected ? 'selected' : ''}`}>
+      {/* Top section with checkbox and badges */}
+      <div className="task-card-header">
+        {/* Selection checkbox for bulk operations */}
+        {onToggleSelect && (
+          <div className="task-select-checkbox">
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => onToggleSelect(task.id)}
+              onClick={(e) => e.stopPropagation()}
+              aria-label={`Select task: ${task.title}`}
+            />
           </div>
         )}
+
+        {/* Priority and Category badges */}
+        <div className="task-badges">
+          <div className="task-priority" style={{ backgroundColor: priorityColor }}>
+            {priorityLabel}
+          </div>
+          {category && (
+            <div 
+              className="task-category" 
+              style={{ backgroundColor: category.color }}
+            >
+              {category.name}
+            </div>
+          )}
+        </div>
       </div>
       
       {/* Task title */}

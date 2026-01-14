@@ -13,6 +13,7 @@ import { CATEGORIES } from '../utils/categories'
  * @param {Function} onPriorityChange - Callback when priority filter changes
  * @param {string} sortBy - Current sort option
  * @param {Function} onSortChange - Callback when sort option changes
+ * @param {Object} searchInputRef - Ref for search input (for keyboard shortcuts)
  */
 const SearchFilterBar = ({
   searchQuery,
@@ -22,13 +23,15 @@ const SearchFilterBar = ({
   selectedPriority,
   onPriorityChange,
   sortBy,
-  onSortChange
+  onSortChange,
+  searchInputRef
 }) => {
   return (
     <div className="search-filter-bar">
       {/* Search input */}
       <div className="search-group">
         <input
+          ref={searchInputRef}
           type="text"
           className="search-input"
           placeholder="Search tasks..."

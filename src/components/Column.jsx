@@ -15,8 +15,10 @@ import { checkWipLimit } from '../utils/boardUtils'
  * @param {Array} tasks - Array of tasks belonging to this column
  * @param {Function} onEdit - Callback function to handle task editing
  * @param {Function} onDelete - Callback function to handle task deletion
+ * @param {Array} selectedTasks - Array of selected task IDs for bulk operations
+ * @param {Function} onToggleTaskSelect - Callback to toggle task selection
  */
-const Column = ({ columnId, title, wipLimit, tasks, onEdit, onDelete }) => {
+const Column = ({ columnId, title, wipLimit, tasks, onEdit, onDelete, selectedTasks = [], onToggleTaskSelect }) => {
   // Check WIP limit status
   const columnObj = { wipLimit }
   const wipStatus = checkWipLimit(columnObj, tasks)
@@ -75,6 +77,8 @@ const Column = ({ columnId, title, wipLimit, tasks, onEdit, onDelete }) => {
                       task={task}
                       onEdit={onEdit}
                       onDelete={onDelete}
+                      isSelected={selectedTasks.includes(task.id)}
+                      onToggleSelect={onToggleTaskSelect}
                     />
                   </div>
                 )}

@@ -1,15 +1,22 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import KanbanBoard from './components/KanbanBoard'
 import TaskForm from './components/TaskForm'
 import SearchFilterBar from './components/SearchFilterBar'
 import BoardSwitcher from './components/BoardSwitcher'
 import BoardForm from './components/BoardForm'
 import BoardStats from './components/BoardStats'
+import ThemeToggle from './components/ThemeToggle'
+import KeyboardShortcuts from './components/KeyboardShortcuts'
+import BulkActions from './components/BulkActions'
+import ExportImport from './components/ExportImport'
+import PrintView from './components/PrintView'
 import { saveBoards, loadBoards, saveCurrentBoard, loadCurrentBoard, generateBoardId } from './utils/boardStorage'
 import { generateId } from './utils/storage'
 import { initialTasks } from './data/initialTasks'
 import { defaultTemplate } from './utils/boardTemplates'
 import { createBoardFromTemplate } from './utils/boardUtils'
+import { getTheme, applyTheme } from './utils/theme'
+import { createHistoryManager } from './utils/undoRedo'
 
 /**
  * Main App Component
@@ -34,6 +41,15 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState('all')
   const [selectedPriority, setSelectedPriority] = useState('all')
   const [sortBy, setSortBy] = useState('priority')
+
+  // Phase 4: State for new features
+  const [selectedTasks, setSelectedTasks] = useState([])
+  const [isExportImportOpen, setIsExportImportOpen] = useState(false)
+  const [isPrintViewOpen, setIsPrintViewOpen] = useState(false)
+  const searchInputRef = useRef(null)
+
+  // Undo/Redo history manager
+  const historyManager = useRef(createHistoryManager(50))
 
   // Get current board object
   const currentBoard = useMemo(() => {
@@ -81,11 +97,24 @@ function App() {
   }
 
   /**
+   * Initialize theme on component mount
+   */
+  useEffect(() => {
+    const theme = getTheme()
+    applyTheme(theme)
+  }, [])
+
+  /**
    * Initialize boards on component mount
    */
   useEffect(() => {
     const loadedBoards = loadBoards()
     const savedCurrentBoardId = loadCurrentBoard()
+
+    // Initialize history with loaded boards
+    if (loadedBoards.length > 0) {
+      historyManager.current.push(loadedBoards)
+    }
 
     if (loadedBoards.length === 0) {
       // No boards exist - check for old data or create default
@@ -114,10 +143,15 @@ function App() {
 
   /**
    * Save boards to localStorage whenever boards state changes
+   * Also update history for undo/redo
    */
   useEffect(() => {
     if (boards.length > 0) {
       saveBoards(boards)
+      // Don't push to history on initial load
+      if (historyManager.current.getCurrent() !== null) {
+        historyManager.current.push(boards)
+      }
     }
   }, [boards])
 
@@ -136,11 +170,16 @@ function App() {
    * @param {Function} updateFn - Function that receives board and returns updated board
    */
   const updateBoard = (boardId, updateFn) => {
-    setBoards(prevBoards =>
-      prevBoards.map(board =>
+    setBoards(prevBoards => {
+      const updated = prevBoards.map(board =>
         board.id === boardId ? { ...updateFn(board), updatedAt: new Date().toISOString() } : board
       )
-    )
+      // Update history after state update
+      setTimeout(() => {
+        historyManager.current.push(updated)
+      }, 0)
+      return updated
+    })
   }
 
   /**
@@ -312,8 +351,123 @@ function App() {
         }
       }
       
+      // Update history
+      setTimeout(() => {
+        historyManager.current.push(updated)
+      }, 0)
+      
       return updated
     })
+  }
+
+  /**
+   * Phase 4: Undo last action
+   */
+  const handleUndo = () => {
+    const previousState = historyManager.current.undo()
+    if (previousState) {
+      setBoards(previousState)
+    }
+  }
+
+  /**
+   * Phase 4: Redo last undone action
+   */
+  const handleRedo = () => {
+    const nextState = historyManager.current.redo()
+    if (nextState) {
+      setBoards(nextState)
+    }
+  }
+
+  /**
+   * Phase 4: Toggle task selection for bulk operations
+   */
+  const handleToggleTaskSelect = (taskId) => {
+    setSelectedTasks(prev =>
+      prev.includes(taskId)
+        ? prev.filter(id => id !== taskId)
+        : [...prev, taskId]
+    )
+  }
+
+  /**
+   * Phase 4: Clear task selection
+   */
+  const handleClearSelection = () => {
+    setSelectedTasks([])
+  }
+
+  /**
+   * Phase 4: Bulk delete tasks
+   */
+  const handleBulkDelete = (taskIds) => {
+    if (!currentBoard) return
+    updateBoard(currentBoardId, (board) => ({
+      ...board,
+      tasks: (board.tasks || []).filter(task => !taskIds.includes(task.id))
+    }))
+  }
+
+  /**
+   * Phase 4: Bulk move tasks to column
+   */
+  const handleBulkMove = (taskIds, columnId) => {
+    if (!currentBoard) return
+    updateBoard(currentBoardId, (board) => ({
+      ...board,
+      tasks: (board.tasks || []).map(task =>
+        taskIds.includes(task.id)
+          ? { ...task, status: columnId, updatedAt: new Date().toISOString() }
+          : task
+      )
+    }))
+  }
+
+  /**
+   * Phase 4: Bulk change priority
+   */
+  const handleBulkPriority = (taskIds, priority) => {
+    if (!currentBoard) return
+    updateBoard(currentBoardId, (board) => ({
+      ...board,
+      tasks: (board.tasks || []).map(task =>
+        taskIds.includes(task.id)
+          ? { ...task, priority, updatedAt: new Date().toISOString() }
+          : task
+      )
+    }))
+  }
+
+  /**
+   * Phase 4: Bulk change category
+   */
+  const handleBulkCategory = (taskIds, category) => {
+    if (!currentBoard) return
+    updateBoard(currentBoardId, (board) => ({
+      ...board,
+      tasks: (board.tasks || []).map(task =>
+        taskIds.includes(task.id)
+          ? { ...task, category, updatedAt: new Date().toISOString() }
+          : task
+      )
+    }))
+  }
+
+  /**
+   * Phase 4: Handle import boards
+   */
+  const handleImportBoards = (importedBoards) => {
+    setBoards(prevBoards => [...prevBoards, ...importedBoards])
+  }
+
+  /**
+   * Phase 4: Focus search input
+   */
+  const handleFocusSearch = () => {
+    if (searchInputRef.current) {
+      searchInputRef.current.focus()
+    }
   }
 
   /**
@@ -417,9 +571,28 @@ function App() {
             onDeleteBoard={handleDeleteBoard}
           />
         </div>
-        <button className="btn-create" onClick={handleCreateTask}>
-          + Create Task
-        </button>
+        <div className="app-header-right">
+          <ThemeToggle />
+          <button
+            className="btn-icon"
+            onClick={() => setIsPrintViewOpen(true)}
+            title="Print view"
+            aria-label="Print view"
+          >
+            🖨️
+          </button>
+          <button
+            className="btn-icon"
+            onClick={() => setIsExportImportOpen(true)}
+            title="Export/Import"
+            aria-label="Export/Import"
+          >
+            📥
+          </button>
+          <button className="btn-create" onClick={handleCreateTask}>
+            + Create Task
+          </button>
+        </div>
       </header>
 
       {/* Search and filter bar */}
@@ -433,8 +606,22 @@ function App() {
           onPriorityChange={setSelectedPriority}
           sortBy={sortBy}
           onSortChange={setSortBy}
+          searchInputRef={searchInputRef}
         />
       </div>
+
+      {/* Bulk actions bar */}
+      {selectedTasks.length > 0 && (
+        <BulkActions
+          selectedTasks={selectedTasks}
+          onBulkDelete={handleBulkDelete}
+          onBulkMove={handleBulkMove}
+          onBulkPriority={handleBulkPriority}
+          onBulkCategory={handleBulkCategory}
+          columns={currentBoard?.columns || []}
+          onClearSelection={handleClearSelection}
+        />
+      )}
 
       {/* Main content area */}
       <main className="app-main">
@@ -447,6 +634,8 @@ function App() {
               onTaskMove={handleTaskMove}
               onEdit={handleEditTask}
               onDelete={handleDeleteTask}
+              selectedTasks={selectedTasks}
+              onToggleTaskSelect={handleToggleTaskSelect}
             />
           </div>
 
@@ -470,6 +659,37 @@ function App() {
         isOpen={isBoardFormOpen}
         onClose={() => setIsBoardFormOpen(false)}
         onSubmit={handleCreateBoard}
+      />
+
+      {/* Export/Import modal */}
+      <ExportImport
+        isOpen={isExportImportOpen}
+        onClose={() => setIsExportImportOpen(false)}
+        boards={boards}
+        onImport={handleImportBoards}
+      />
+
+      {/* Print view */}
+      <PrintView
+        board={currentBoard}
+        isOpen={isPrintViewOpen}
+        onClose={() => setIsPrintViewOpen(false)}
+      />
+
+      {/* Keyboard shortcuts handler */}
+      <KeyboardShortcuts
+        shortcuts={{
+          onCreateTask: handleCreateTask,
+          onSearch: handleFocusSearch,
+          onUndo: handleUndo,
+          onRedo: handleRedo,
+          onCloseModal: () => {
+            if (isFormOpen) handleCloseForm()
+            if (isBoardFormOpen) setIsBoardFormOpen(false)
+            if (isExportImportOpen) setIsExportImportOpen(false)
+            if (isPrintViewOpen) setIsPrintViewOpen(false)
+          }
+        }}
       />
     </div>
   )

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { CATEGORIES } from '../utils/categories'
 import { formatDateForInput } from '../utils/dateUtils'
+import { getTaskTemplates, createTaskFromTemplate } from '../utils/taskTemplates'
 
 /**
  * TaskForm Component
  * Modal form for creating and editing tasks
  * Handles form validation and submission
+ * Supports task templates
  * 
  * @param {Object} task - Task object to edit (null for new tasks)
  * @param {boolean} isOpen - Whether the modal is visible
@@ -14,6 +16,7 @@ import { formatDateForInput } from '../utils/dateUtils'
  */
 
 const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
+  const [selectedTemplate, setSelectedTemplate] = useState('')
   // Form state - manages input values
   const [formData, setFormData] = useState({
     title: '',
@@ -29,6 +32,22 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
 
   // Validation errors state
   const [errors, setErrors] = useState({})
+
+  const taskTemplates = getTaskTemplates()
+
+  // Handle template selection
+  const handleTemplateSelect = (templateId) => {
+    if (templateId && !task) { // Only allow templates when creating new tasks
+      const templateData = createTaskFromTemplate(templateId)
+      if (templateData) {
+        setFormData(prev => ({
+          ...prev,
+          ...templateData
+        }))
+      }
+    }
+    setSelectedTemplate(templateId)
+  }
 
   // Update form data when task prop changes (for editing)
   useEffect(() => {
@@ -56,6 +75,7 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
     // Clear errors and new comment when form opens
     setErrors({})
     setNewComment('')
+    setSelectedTemplate('')
   }, [task, isOpen])
 
   /**
@@ -183,6 +203,25 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="task-form">
+          {/* Task templates (only when creating new task) */}
+          {!task && taskTemplates.length > 0 && (
+            <div className="form-group">
+              <label htmlFor="task-template">Use Template (optional)</label>
+              <select
+                id="task-template"
+                value={selectedTemplate}
+                onChange={(e) => handleTemplateSelect(e.target.value)}
+              >
+                <option value="">No template</option>
+                {taskTemplates.map(template => (
+                  <option key={template.id} value={template.id}>
+                    {template.name} - {template.description}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Title input */}
           <div className="form-group">
             <label htmlFor="title">
