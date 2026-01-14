@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { CATEGORIES } from '../utils/categories'
 import { formatDateForInput } from '../utils/dateUtils'
 import { getTaskTemplates, createTaskFromTemplate } from '../utils/taskTemplates'
+import { parseTimeString, formatTime } from '../utils/timeTracking'
+import { generateId } from '../utils/storage'
 
 /**
  * TaskForm Component
@@ -15,9 +17,10 @@ import { getTaskTemplates, createTaskFromTemplate } from '../utils/taskTemplates
  * @param {Function} onSubmit - Callback function to handle form submission
  * @param {Array} users - Array of all users (for task assignment)
  * @param {Object} currentUser - Current logged-in user
+ * @param {Array} allTasks - Array of all tasks (for dependencies)
  */
 
-const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = null }) => {
+const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = null, allTasks = [] }) => {
   const [selectedTemplate, setSelectedTemplate] = useState('')
   // Form state - manages input values
   const [formData, setFormData] = useState({
@@ -27,11 +30,22 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
     dueDate: '',
     category: 'other',
     assignedTo: null,
-    comments: []
+    comments: [],
+    subtasks: [],
+    timeEstimate: null,
+    timeSpent: null,
+    dependencies: []
   })
 
   // New comment input state
   const [newComment, setNewComment] = useState('')
+  
+  // Subtask input state
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState('')
+  
+  // Time tracking input states (as strings for user input)
+  const [timeEstimateInput, setTimeEstimateInput] = useState('')
+  const [timeSpentInput, setTimeSpentInput] = useState('')
 
   // Validation errors state
   const [errors, setErrors] = useState({})
@@ -66,8 +80,15 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
         dueDate: task.dueDate ? formatDateForInput(task.dueDate) : '',
         category: task.category || 'other',
         assignedTo: task.assignedTo || null,
-        comments: task.comments || []
+        comments: task.comments || [],
+        subtasks: task.subtasks || [],
+        timeEstimate: task.timeEstimate || null,
+        timeSpent: task.timeSpent || null,
+        dependencies: task.dependencies || []
       })
+      // Set time tracking inputs
+      setTimeEstimateInput(task.timeEstimate ? formatTime(task.timeEstimate) : '')
+      setTimeSpentInput(task.timeSpent ? formatTime(task.timeSpent) : '')
     } else {
       // If creating new task, reset form to defaults
       setFormData({
@@ -77,12 +98,19 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
         dueDate: '',
         category: 'other',
         assignedTo: null,
-        comments: []
+        comments: [],
+        subtasks: [],
+        timeEstimate: null,
+        timeSpent: null,
+        dependencies: []
       })
+      setTimeEstimateInput('')
+      setTimeSpentInput('')
     }
     // Clear errors and new comment when form opens
     setErrors({})
     setNewComment('')
+    setNewSubtaskTitle('')
     setSelectedTemplate('')
   }, [task, isOpen])
 
@@ -161,6 +189,77 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
       comments: prev.comments.filter(comment => comment.id !== commentId)
     }))
   }
+  
+  /**
+   * Handles adding a new subtask
+   */
+  const handleAddSubtask = () => {
+    if (newSubtaskTitle.trim()) {
+      const subtask = {
+        id: generateId(),
+        title: newSubtaskTitle.trim(),
+        completed: false
+      }
+      
+      setFormData(prev => ({
+        ...prev,
+        subtasks: [...prev.subtasks, subtask]
+      }))
+      
+      setNewSubtaskTitle('')
+    }
+  }
+  
+  /**
+   * Handles deleting a subtask
+   * @param {string} subtaskId - ID of the subtask to delete
+   */
+  const handleDeleteSubtask = (subtaskId) => {
+    setFormData(prev => ({
+      ...prev,
+      subtasks: prev.subtasks.filter(subtask => subtask.id !== subtaskId)
+    }))
+  }
+  
+  /**
+   * Handles toggling subtask completion
+   * @param {string} subtaskId - ID of the subtask to toggle
+   */
+  const handleToggleSubtask = (subtaskId) => {
+    setFormData(prev => ({
+      ...prev,
+      subtasks: prev.subtasks.map(st => 
+        st.id === subtaskId ? { ...st, completed: !st.completed } : st
+      )
+    }))
+  }
+  
+  /**
+   * Handles adding a dependency
+   * @param {string} taskId - ID of the task to depend on
+   */
+  const handleAddDependency = (taskId) => {
+    if (taskId && !formData.dependencies.includes(taskId) && taskId !== task?.id) {
+      setFormData(prev => ({
+        ...prev,
+        dependencies: [...prev.dependencies, taskId]
+      }))
+    }
+  }
+  
+  /**
+   * Handles removing a dependency
+   * @param {string} taskId - ID of the dependency to remove
+   */
+  const handleRemoveDependency = (taskId) => {
+    setFormData(prev => ({
+      ...prev,
+      dependencies: prev.dependencies.filter(id => id !== taskId)
+    }))
+  }
+  
+  // Get available tasks for dependencies (exclude current task)
+  const availableDependencyTasks = allTasks.filter(t => t.id !== task?.id)
 
   /**
    * Handles form submission
@@ -175,9 +274,12 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
     }
 
     // Convert dueDate to ISO string if provided
+    // Parse time tracking inputs to minutes
     const submitData = {
       ...formData,
-      dueDate: formData.dueDate ? new Date(formData.dueDate).toISOString() : null
+      dueDate: formData.dueDate ? new Date(formData.dueDate).toISOString() : null,
+      timeEstimate: timeEstimateInput ? parseTimeString(timeEstimateInput) : null,
+      timeSpent: timeSpentInput ? parseTimeString(timeSpentInput) : null
     }
 
     // Call parent's onSubmit function with form data
@@ -191,9 +293,16 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
       dueDate: '',
       category: 'other',
       assignedTo: null,
-      comments: []
+      comments: [],
+      subtasks: [],
+      timeEstimate: null,
+      timeSpent: null,
+      dependencies: []
     })
     setNewComment('')
+    setNewSubtaskTitle('')
+    setTimeEstimateInput('')
+    setTimeSpentInput('')
   }
 
   // Don't render if modal is not open
@@ -332,6 +441,147 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
             </div>
           )}
 
+          {/* Subtasks section */}
+          <div className="form-group">
+            <label>Subtasks</label>
+            <div className="subtasks-section">
+              {/* Existing subtasks */}
+              {formData.subtasks && formData.subtasks.length > 0 && (
+                <div className="subtasks-list">
+                  {formData.subtasks.map(subtask => (
+                    <div key={subtask.id} className="subtask-item-form">
+                      <input
+                        type="checkbox"
+                        checked={subtask.completed}
+                        onChange={() => handleToggleSubtask(subtask.id)}
+                      />
+                      <span className={subtask.completed ? 'subtask-completed' : ''}>
+                        {subtask.title}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn-delete-subtask"
+                        onClick={() => handleDeleteSubtask(subtask.id)}
+                        aria-label="Delete subtask"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Add new subtask */}
+              <div className="add-subtask">
+                <input
+                  type="text"
+                  className="subtask-input"
+                  placeholder="Add a subtask..."
+                  value={newSubtaskTitle}
+                  onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleAddSubtask()
+                    }
+                  }}
+                  maxLength={100}
+                />
+                <button
+                  type="button"
+                  className="btn-add-subtask"
+                  onClick={handleAddSubtask}
+                  disabled={!newSubtaskTitle.trim()}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          {/* Time tracking section */}
+          <div className="form-group">
+            <label>Time Tracking</label>
+            <div className="time-tracking-section">
+              <div className="time-input-group">
+                <label htmlFor="timeEstimate">Time Estimate</label>
+                <input
+                  type="text"
+                  id="timeEstimate"
+                  className="time-input"
+                  placeholder="e.g., 2h 30m, 1d 4h, 45m"
+                  value={timeEstimateInput}
+                  onChange={(e) => setTimeEstimateInput(e.target.value)}
+                />
+                <small className="time-input-hint">Format: 2h 30m, 1d 4h, 45m</small>
+              </div>
+              
+              <div className="time-input-group">
+                <label htmlFor="timeSpent">Time Spent</label>
+                <input
+                  type="text"
+                  id="timeSpent"
+                  className="time-input"
+                  placeholder="e.g., 2h 30m, 1d 4h, 45m"
+                  value={timeSpentInput}
+                  onChange={(e) => setTimeSpentInput(e.target.value)}
+                />
+                <small className="time-input-hint">Format: 2h 30m, 1d 4h, 45m</small>
+              </div>
+            </div>
+          </div>
+          
+          {/* Dependencies section */}
+          {availableDependencyTasks.length > 0 && (
+            <div className="form-group">
+              <label>Dependencies</label>
+              <div className="dependencies-section">
+                {/* Existing dependencies */}
+                {formData.dependencies && formData.dependencies.length > 0 && (
+                  <div className="dependencies-list">
+                    {formData.dependencies.map(depId => {
+                      const depTask = allTasks.find(t => t.id === depId)
+                      return depTask ? (
+                        <div key={depId} className="dependency-item">
+                          <span className="dependency-task-title">{depTask.title}</span>
+                          <button
+                            type="button"
+                            className="btn-remove-dependency"
+                            onClick={() => handleRemoveDependency(depId)}
+                            aria-label="Remove dependency"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ) : null
+                    })}
+                  </div>
+                )}
+                
+                {/* Add new dependency */}
+                <select
+                  className="dependency-select"
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleAddDependency(e.target.value)
+                      e.target.value = ''
+                    }
+                  }}
+                >
+                  <option value="">Add dependency...</option>
+                  {availableDependencyTasks
+                    .filter(t => !formData.dependencies.includes(t.id))
+                    .map(depTask => (
+                      <option key={depTask.id} value={depTask.id}>
+                        {depTask.title} ({depTask.status})
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+          )}
+          
           {/* Comments section */}
           <div className="form-group">
             <label>Comments</label>

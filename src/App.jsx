@@ -16,6 +16,8 @@ import ActivityLog from './components/ActivityLog'
 import NotificationsPanel from './components/NotificationsPanel'
 import NotificationButton from './components/NotificationButton'
 import BoardSharing from './components/BoardSharing'
+import CalendarView from './components/CalendarView'
+import AnalyticsDashboard from './components/AnalyticsDashboard'
 import { saveBoards, loadBoards, saveCurrentBoard, loadCurrentBoard, generateBoardId } from './utils/boardStorage'
 import { generateId } from './utils/storage'
 import { initialTasks } from './data/initialTasks'
@@ -64,6 +66,9 @@ function App() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
   const [isBoardSharingOpen, setIsBoardSharingOpen] = useState(false)
   const [boardActivities, setBoardActivities] = useState([])
+  
+  // Phase 6: State for view switching
+  const [currentView, setCurrentView] = useState('kanban') // 'kanban', 'calendar', 'analytics'
 
   // Undo/Redo history manager
   const historyManager = useRef(createHistoryManager(50))
@@ -906,20 +911,44 @@ function App() {
         </div>
       </header>
 
-      {/* Search and filter bar */}
-      <div className="app-filters">
-        <SearchFilterBar
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          selectedCategory={selectedCategory}
-          onCategoryChange={setSelectedCategory}
-          selectedPriority={selectedPriority}
-          onPriorityChange={setSelectedPriority}
-          sortBy={sortBy}
-          onSortChange={setSortBy}
-          searchInputRef={searchInputRef}
-        />
+      {/* View switcher */}
+      <div className="view-switcher">
+        <button
+          className={`view-btn ${currentView === 'kanban' ? 'active' : ''}`}
+          onClick={() => setCurrentView('kanban')}
+        >
+          📋 Kanban
+        </button>
+        <button
+          className={`view-btn ${currentView === 'calendar' ? 'active' : ''}`}
+          onClick={() => setCurrentView('calendar')}
+        >
+          📅 Calendar
+        </button>
+        <button
+          className={`view-btn ${currentView === 'analytics' ? 'active' : ''}`}
+          onClick={() => setCurrentView('analytics')}
+        >
+          📊 Analytics
+        </button>
       </div>
+
+      {/* Search and filter bar (only show for kanban view) */}
+      {currentView === 'kanban' && (
+        <div className="app-filters">
+          <SearchFilterBar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            selectedCategory={selectedCategory}
+            onCategoryChange={setSelectedCategory}
+            selectedPriority={selectedPriority}
+            onPriorityChange={setSelectedPriority}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            searchInputRef={searchInputRef}
+          />
+        </div>
+      )}
 
       {/* Bulk actions bar */}
       {selectedTasks.length > 0 && (
@@ -936,26 +965,48 @@ function App() {
 
       {/* Main content area */}
       <main className="app-main">
-        <div className="app-main-content">
-          {/* Kanban board */}
-          <div className="board-container">
-            <KanbanBoard
-              tasks={filteredAndSortedTasks}
-              columns={currentBoard.columns}
-              onTaskMove={handleTaskMove}
-              onEdit={canEdit ? handleEditTask : null}
-              onDelete={canEdit ? handleDeleteTask : null}
-              selectedTasks={selectedTasks}
-              onToggleTaskSelect={canEdit ? handleToggleTaskSelect : null}
-              users={allUsers}
+        {currentView === 'kanban' && (
+          <div className="app-main-content">
+            {/* Kanban board */}
+            <div className="board-container">
+              <KanbanBoard
+                tasks={filteredAndSortedTasks}
+                columns={currentBoard.columns}
+                onTaskMove={handleTaskMove}
+                onEdit={canEdit ? handleEditTask : null}
+                onDelete={canEdit ? handleDeleteTask : null}
+                selectedTasks={selectedTasks}
+                onToggleTaskSelect={canEdit ? handleToggleTaskSelect : null}
+                users={allUsers}
+                currentUser={currentUser}
+                canEdit={canEdit}
+              />
+            </div>
+
+            {/* Board statistics sidebar */}
+            <aside className="board-sidebar">
+              <BoardStats board={currentBoard} />
+            </aside>
+          </div>
+        )}
+        
+        {currentView === 'calendar' && (
+          <div className="calendar-container">
+            <CalendarView
+              tasks={tasks}
+              onTaskClick={canEdit ? handleEditTask : null}
             />
           </div>
-
-          {/* Board statistics sidebar */}
-          <aside className="board-sidebar">
-            <BoardStats board={currentBoard} />
-          </aside>
-        </div>
+        )}
+        
+        {currentView === 'analytics' && (
+          <div className="analytics-container">
+            <AnalyticsDashboard
+              tasks={tasks}
+              boards={boards}
+            />
+          </div>
+        )}
       </main>
 
       {/* Task form modal */}
@@ -966,6 +1017,7 @@ function App() {
         onSubmit={handleSubmitTask}
         users={allUsers}
         currentUser={currentUser}
+        allTasks={tasks}
       />
 
       {/* Board form modal */}
