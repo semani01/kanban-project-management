@@ -1,23 +1,24 @@
 import React from 'react'
-import { DragDropContext } from 'react-beautiful-dnd'
+import { DragDropContext } from '@hello-pangea/dnd'
 import Column from './Column'
 
 /**
  * KanbanBoard Component
  * Main container for the Kanban board with drag-and-drop functionality
- * Manages three columns: To Do, In Progress, and Done
+ * Supports custom columns with WIP limits
  * 
  * @param {Array} tasks - Array of all tasks
+ * @param {Array} columns - Array of column objects with id, title, and optional wipLimit
  * @param {Function} onTaskMove - Callback function when a task is moved between columns
  * @param {Function} onEdit - Callback function to handle task editing
  * @param {Function} onDelete - Callback function to handle task deletion
  */
-const KanbanBoard = ({ tasks, onTaskMove, onEdit, onDelete }) => {
-  // Column configuration - defines the three columns of the Kanban board
-  const columns = [
-    { id: 'todo', title: 'To Do' },
-    { id: 'in-progress', title: 'In Progress' },
-    { id: 'done', title: 'Done' }
+const KanbanBoard = ({ tasks, columns, onTaskMove, onEdit, onDelete }) => {
+  // Default columns if none provided (backward compatibility)
+  const boardColumns = columns || [
+    { id: 'todo', title: 'To Do', wipLimit: null },
+    { id: 'in-progress', title: 'In Progress', wipLimit: null },
+    { id: 'done', title: 'Done', wipLimit: null }
   ]
 
   // Filter tasks by status for each column
@@ -49,15 +50,9 @@ const KanbanBoard = ({ tasks, onTaskMove, onEdit, onDelete }) => {
       return
     }
 
-    // Map column IDs to status values
-    const statusMap = {
-      'todo': 'todo',
-      'in-progress': 'in-progress',
-      'done': 'done'
-    }
-
-    // Get the new status based on the destination column
-    const newStatus = statusMap[destination.droppableId]
+    // Get the new status based on the destination column ID
+    // Column ID becomes the task status
+    const newStatus = destination.droppableId
 
     // Call the parent's onTaskMove function to update the task
     onTaskMove(draggableId, newStatus)
@@ -69,11 +64,12 @@ const KanbanBoard = ({ tasks, onTaskMove, onEdit, onDelete }) => {
       <DragDropContext onDragEnd={handleDragEnd}>
         <div className="columns-container">
           {/* Render each column */}
-          {columns.map(column => (
+          {boardColumns.map(column => (
             <Column
               key={column.id}
               columnId={column.id}
               title={column.title}
+              wipLimit={column.wipLimit}
               tasks={getTasksByStatus(column.id)}
               onEdit={onEdit}
               onDelete={onDelete}

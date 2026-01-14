@@ -1,26 +1,49 @@
 import React from 'react'
-import { Droppable, Draggable } from 'react-beautiful-dnd'
+import { Droppable, Draggable } from '@hello-pangea/dnd'
 import Task from './Task'
+import { checkWipLimit } from '../utils/boardUtils'
 
 /**
  * Column Component
- * Represents a single column in the Kanban board (To Do, In Progress, or Done)
+ * Represents a single column in the Kanban board
  * Handles the droppable area for drag-and-drop functionality
+ * Supports WIP (Work In Progress) limits
  * 
- * @param {string} columnId - Unique identifier for the column (todo, in-progress, done)
+ * @param {string} columnId - Unique identifier for the column
  * @param {string} title - Display title of the column
+ * @param {number|null} wipLimit - Optional WIP limit for the column
  * @param {Array} tasks - Array of tasks belonging to this column
  * @param {Function} onEdit - Callback function to handle task editing
  * @param {Function} onDelete - Callback function to handle task deletion
  */
-const Column = ({ columnId, title, tasks, onEdit, onDelete }) => {
+const Column = ({ columnId, title, wipLimit, tasks, onEdit, onDelete }) => {
+  // Check WIP limit status
+  const columnObj = { wipLimit }
+  const wipStatus = checkWipLimit(columnObj, tasks)
+  const isWipLimited = wipLimit !== null && wipLimit !== undefined
+
   return (
-    <div className="column">
-      {/* Column header with title and task count */}
+    <div className={`column ${wipStatus.isAtLimit ? 'wip-limit-reached' : ''}`}>
+      {/* Column header with title, task count, and WIP limit */}
       <div className="column-header">
         <h2 className="column-title">{title}</h2>
-        <span className="column-count">{tasks.length}</span>
+        <div className="column-count-container">
+          {isWipLimited ? (
+            <span className={`column-count ${wipStatus.isAtLimit ? 'wip-limit-exceeded' : ''}`}>
+              {tasks.length}/{wipLimit}
+            </span>
+          ) : (
+            <span className="column-count">{tasks.length}</span>
+          )}
+        </div>
       </div>
+      
+      {/* WIP limit warning */}
+      {wipStatus.isAtLimit && (
+        <div className="wip-limit-warning">
+          ⚠️ {wipStatus.message}
+        </div>
+      )}
       
       {/* Droppable area for drag-and-drop */}
       {/* Droppable is a component from react-beautiful-dnd that creates a drop zone */}
