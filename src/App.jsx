@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import KanbanBoard from './components/KanbanBoard'
 import TaskForm from './components/TaskForm'
+import SearchFilterBar from './components/SearchFilterBar'
 import { saveTasks, loadTasks, generateId } from './utils/storage'
 import { initialTasks } from './data/initialTasks'
 
@@ -8,6 +9,7 @@ import { initialTasks } from './data/initialTasks'
  * Main App Component
  * Manages global application state and task CRUD operations
  * Handles data persistence with localStorage
+ * Implements search, filter, and sort functionality
  */
 function App() {
   // State for all tasks
@@ -16,6 +18,12 @@ function App() {
   // State for task form modal
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [editingTask, setEditingTask] = useState(null)
+
+  // State for search and filters
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedCategory, setSelectedCategory] = useState('all')
+  const [selectedPriority, setSelectedPriority] = useState('all')
+  const [sortBy, setSortBy] = useState('priority')
 
   /**
    * Load tasks from localStorage on component mount
@@ -132,6 +140,63 @@ function App() {
     )
   }
 
+  /**
+   * Filters and sorts tasks based on current search, filter, and sort settings
+   * Uses useMemo to optimize performance and only recalculate when dependencies change
+   */
+  const filteredAndSortedTasks = useMemo(() => {
+    let filtered = [...tasks]
+
+    // Apply search filter (searches in title and description)
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      filtered = filtered.filter(task =>
+        task.title.toLowerCase().includes(query) ||
+        (task.description && task.description.toLowerCase().includes(query))
+      )
+    }
+
+    // Apply category filter
+    if (selectedCategory !== 'all') {
+      filtered = filtered.filter(task => task.category === selectedCategory)
+    }
+
+    // Apply priority filter
+    if (selectedPriority !== 'all') {
+      filtered = filtered.filter(task => task.priority === selectedPriority)
+    }
+
+    // Apply sorting
+    filtered.sort((a, b) => {
+      switch (sortBy) {
+        case 'priority':
+          // Sort by priority: high > medium > low
+          const priorityOrder = { high: 3, medium: 2, low: 1 }
+          return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0)
+        
+        case 'dueDate':
+          // Sort by due date (earliest first, nulls last)
+          if (!a.dueDate && !b.dueDate) return 0
+          if (!a.dueDate) return 1
+          if (!b.dueDate) return -1
+          return new Date(a.dueDate) - new Date(b.dueDate)
+        
+        case 'title':
+          // Sort alphabetically by title
+          return a.title.localeCompare(b.title)
+        
+        case 'created':
+          // Sort by creation date (newest first)
+          return new Date(b.createdAt) - new Date(a.createdAt)
+        
+        default:
+          return 0
+      }
+    })
+
+    return filtered
+  }, [tasks, searchQuery, selectedCategory, selectedPriority, sortBy])
+
   return (
     <div className="app">
       {/* App header */}
@@ -142,10 +207,24 @@ function App() {
         </button>
       </header>
 
+      {/* Search and filter bar */}
+      <div className="app-filters">
+        <SearchFilterBar
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          selectedCategory={selectedCategory}
+          onCategoryChange={setSelectedCategory}
+          selectedPriority={selectedPriority}
+          onPriorityChange={setSelectedPriority}
+          sortBy={sortBy}
+          onSortChange={setSortBy}
+        />
+      </div>
+
       {/* Main Kanban board */}
       <main className="app-main">
         <KanbanBoard
-          tasks={tasks}
+          tasks={filteredAndSortedTasks}
           onTaskMove={handleTaskMove}
           onEdit={handleEditTask}
           onDelete={handleDeleteTask}

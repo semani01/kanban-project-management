@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import { CATEGORIES } from '../utils/categories'
+import { formatDateForInput } from '../utils/dateUtils'
 
 /**
  * TaskForm Component
@@ -10,13 +12,20 @@ import React, { useState, useEffect } from 'react'
  * @param {Function} onClose - Callback function to close the modal
  * @param {Function} onSubmit - Callback function to handle form submission
  */
+
 const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
   // Form state - manages input values
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    priority: 'medium'
+    priority: 'medium',
+    dueDate: '',
+    category: 'other',
+    comments: []
   })
+
+  // New comment input state
+  const [newComment, setNewComment] = useState('')
 
   // Validation errors state
   const [errors, setErrors] = useState({})
@@ -28,18 +37,25 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
       setFormData({
         title: task.title || '',
         description: task.description || '',
-        priority: task.priority || 'medium'
+        priority: task.priority || 'medium',
+        dueDate: task.dueDate ? formatDateForInput(task.dueDate) : '',
+        category: task.category || 'other',
+        comments: task.comments || []
       })
     } else {
       // If creating new task, reset form to defaults
       setFormData({
         title: '',
         description: '',
-        priority: 'medium'
+        priority: 'medium',
+        dueDate: '',
+        category: 'other',
+        comments: []
       })
     }
-    // Clear errors when form opens
+    // Clear errors and new comment when form opens
     setErrors({})
+    setNewComment('')
   }, [task, isOpen])
 
   /**
@@ -88,6 +104,37 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
   }
 
   /**
+   * Handles adding a new comment
+   */
+  const handleAddComment = () => {
+    if (newComment.trim()) {
+      const comment = {
+        id: `comment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        text: newComment.trim(),
+        createdAt: new Date().toISOString()
+      }
+      
+      setFormData(prev => ({
+        ...prev,
+        comments: [...prev.comments, comment]
+      }))
+      
+      setNewComment('')
+    }
+  }
+
+  /**
+   * Handles deleting a comment
+   * @param {string} commentId - ID of the comment to delete
+   */
+  const handleDeleteComment = (commentId) => {
+    setFormData(prev => ({
+      ...prev,
+      comments: prev.comments.filter(comment => comment.id !== commentId)
+    }))
+  }
+
+  /**
    * Handles form submission
    * Validates data and calls onSubmit callback
    */
@@ -99,15 +146,25 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
       return
     }
 
+    // Convert dueDate to ISO string if provided
+    const submitData = {
+      ...formData,
+      dueDate: formData.dueDate ? new Date(formData.dueDate).toISOString() : null
+    }
+
     // Call parent's onSubmit function with form data
-    onSubmit(formData)
+    onSubmit(submitData)
     
     // Reset form after successful submission
     setFormData({
       title: '',
       description: '',
-      priority: 'medium'
+      priority: 'medium',
+      dueDate: '',
+      category: 'other',
+      comments: []
     })
+    setNewComment('')
   }
 
   // Don't render if modal is not open
@@ -175,6 +232,81 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
               <option value="medium">Medium</option>
               <option value="high">High</option>
             </select>
+          </div>
+
+          {/* Due date input */}
+          <div className="form-group">
+            <label htmlFor="dueDate">Due Date</label>
+            <input
+              type="date"
+              id="dueDate"
+              name="dueDate"
+              value={formData.dueDate}
+              onChange={handleChange}
+              min={new Date().toISOString().split('T')[0]}
+            />
+          </div>
+
+          {/* Category select */}
+          <div className="form-group">
+            <label htmlFor="category">Category</label>
+            <select
+              id="category"
+              name="category"
+              value={formData.category}
+              onChange={handleChange}
+            >
+              {CATEGORIES.map(category => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Comments section */}
+          <div className="form-group">
+            <label>Comments</label>
+            <div className="comments-section">
+              {/* Existing comments */}
+              {formData.comments && formData.comments.length > 0 && (
+                <div className="comments-list">
+                  {formData.comments.map(comment => (
+                    <div key={comment.id} className="comment-item">
+                      <p className="comment-text">{comment.text}</p>
+                      <button
+                        type="button"
+                        className="btn-delete-comment"
+                        onClick={() => handleDeleteComment(comment.id)}
+                        aria-label="Delete comment"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Add new comment */}
+              <div className="add-comment">
+                <textarea
+                  className="comment-input"
+                  placeholder="Add a comment..."
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  rows="2"
+                  maxLength={200}
+                />
+                <button
+                  type="button"
+                  className="btn-add-comment"
+                  onClick={handleAddComment}
+                  disabled={!newComment.trim()}
+                >
+                  Add Comment
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Form actions */}

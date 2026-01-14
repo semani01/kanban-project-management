@@ -1,0 +1,11 @@
+---
+alwaysApply: true
+---
+
+- Be sure to always add comments for code blocks to help understand what each block is about
+- After completing each phase, give detailed explanations of what has been done, what each module/file/change does, followed by instructions for github commits. Keep it all neat, clean, and professional.
+- Make sure all code follows industry standards.
+
+# Overview
+
+Insert overview text here. The agent will only see this should they choose to apply the rule.

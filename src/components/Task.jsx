@@ -1,10 +1,13 @@
 import React from 'react'
+import { formatDate, isOverdue, isDueSoon, isToday } from '../utils/dateUtils'
+import { getCategoryById } from '../utils/categories'
+import { parseMarkdown } from '../utils/markdown'
 
 /**
  * Task Component
- * Displays a single task card with title, description, priority, and action buttons
+ * Displays a single task card with title, description, priority, due date, category, and action buttons
  * 
- * @param {Object} task - Task object containing id, title, description, priority, status
+ * @param {Object} task - Task object containing id, title, description, priority, status, dueDate, category, comments
  * @param {Function} onEdit - Callback function to handle task editing
  * @param {Function} onDelete - Callback function to handle task deletion
  */
@@ -27,19 +30,65 @@ const Task = ({ task, onEdit, onDelete }) => {
   const priorityColor = priorityColors[task.priority] || priorityColors.medium
   const priorityLabel = priorityLabels[task.priority] || 'Medium'
 
+  // Get category information
+  const category = task.category ? getCategoryById(task.category) : null
+
+  // Determine due date styling based on status
+  const getDueDateClass = () => {
+    if (!task.dueDate) return ''
+    if (isOverdue(task.dueDate)) return 'due-date overdue'
+    if (isToday(task.dueDate)) return 'due-date today'
+    if (isDueSoon(task.dueDate)) return 'due-date due-soon'
+    return 'due-date'
+  }
+
+  // Get comment count
+  const commentCount = task.comments && task.comments.length > 0 ? task.comments.length : 0
+
   return (
     <div className="task-card">
-      {/* Priority indicator badge */}
-      <div className="task-priority" style={{ backgroundColor: priorityColor }}>
-        {priorityLabel}
+      {/* Priority and Category badges */}
+      <div className="task-badges">
+        <div className="task-priority" style={{ backgroundColor: priorityColor }}>
+          {priorityLabel}
+        </div>
+        {category && (
+          <div 
+            className="task-category" 
+            style={{ backgroundColor: category.color }}
+          >
+            {category.name}
+          </div>
+        )}
       </div>
       
       {/* Task title */}
       <h3 className="task-title">{task.title}</h3>
       
-      {/* Task description */}
+      {/* Task description with markdown support */}
       {task.description && (
-        <p className="task-description">{task.description}</p>
+        <div 
+          className="task-description"
+          dangerouslySetInnerHTML={{ __html: parseMarkdown(task.description) }}
+        />
+      )}
+      
+      {/* Due date */}
+      {task.dueDate && (
+        <div className={getDueDateClass()}>
+          <span className="due-date-icon">📅</span>
+          <span>{formatDate(task.dueDate)}</span>
+          {isOverdue(task.dueDate) && <span className="overdue-label">Overdue</span>}
+          {isToday(task.dueDate) && <span className="today-label">Today</span>}
+        </div>
+      )}
+      
+      {/* Comments indicator */}
+      {commentCount > 0 && (
+        <div className="task-comments-indicator">
+          <span className="comments-icon">💬</span>
+          <span>{commentCount} {commentCount === 1 ? 'comment' : 'comments'}</span>
+        </div>
       )}
       
       {/* Action buttons container */}
