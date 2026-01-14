@@ -18,6 +18,10 @@ import NotificationButton from './components/NotificationButton'
 import BoardSharing from './components/BoardSharing'
 import CalendarView from './components/CalendarView'
 import AnalyticsDashboard from './components/AnalyticsDashboard'
+import AutomationRules from './components/AutomationRules'
+import RecurringTasks from './components/RecurringTasks'
+import AdvancedSearch from './components/AdvancedSearch'
+import CustomFields from './components/CustomFields'
 import { saveBoards, loadBoards, saveCurrentBoard, loadCurrentBoard, generateBoardId } from './utils/boardStorage'
 import { generateId } from './utils/storage'
 import { initialTasks } from './data/initialTasks'
@@ -29,6 +33,9 @@ import { loadCurrentUser, loadUsers } from './utils/userStorage'
 import { createActivityEntry } from './utils/activityLog'
 import { createNotification, saveNotifications, loadNotifications, getUnreadCount } from './utils/notifications'
 import { getUserBoardPermission, PERMISSIONS } from './utils/boardPermissions'
+import { processAutomations } from './utils/automation'
+import { generateRecurringTasks } from './utils/recurringTasks'
+import { applyFilter } from './utils/advancedSearch'
 
 /**
  * Main App Component
@@ -69,6 +76,13 @@ function App() {
   
   // Phase 6: State for view switching
   const [currentView, setCurrentView] = useState('kanban') // 'kanban', 'calendar', 'analytics'
+  
+  // Phase 7: State for automation and advanced features
+  const [isAutomationOpen, setIsAutomationOpen] = useState(false)
+  const [isRecurringTasksOpen, setIsRecurringTasksOpen] = useState(false)
+  const [isAdvancedSearchOpen, setIsAdvancedSearchOpen] = useState(false)
+  const [isCustomFieldsOpen, setIsCustomFieldsOpen] = useState(false)
+  const [activeFilter, setActiveFilter] = useState(null)
 
   // Undo/Redo history manager
   const historyManager = useRef(createHistoryManager(50))
@@ -166,6 +180,17 @@ function App() {
     // Initialize history with loaded boards
     if (accessibleBoards.length > 0) {
       historyManager.current.push(accessibleBoards)
+      
+      // Phase 7: Generate recurring tasks for all boards
+      accessibleBoards.forEach(board => {
+        const generatedTasks = generateRecurringTasks(board.id)
+        if (generatedTasks.length > 0) {
+          updateBoard(board.id, (b) => ({
+            ...b,
+            tasks: [...(b.tasks || []), ...generatedTasks]
+          }))
+        }
+      })
     }
 
     if (accessibleBoards.length === 0) {
@@ -321,12 +346,18 @@ function App() {
       } else {
         // Create new task - add to first column
         const firstColumn = board.columns[0]
-        const newTask = {
+        let newTask = {
           id: generateId(),
           ...formData,
           status: firstColumn ? firstColumn.id : 'todo',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
+        }
+        
+        // Phase 7: Process automations for task-created trigger
+        const automationResult = processAutomations('task-created', { task: newTask }, currentBoardId)
+        if (automationResult.updatedTask) {
+          newTask = automationResult.updatedTask
         }
         
         // Log activity
@@ -340,24 +371,48 @@ function App() {
         )
         
         // Create notification if task is assigned
-        if (formData.assignedTo) {
-          const assignedUser = allUsers.find(u => u.id === formData.assignedTo)
+        if (newTask.assignedTo) {
+          const assignedUser = allUsers.find(u => u.id === newTask.assignedTo)
           if (assignedUser) {
             const notification = createNotification(
-              formData.assignedTo,
+              newTask.assignedTo,
               'task_assigned',
               'Task Assigned',
               `${currentUser.name} assigned you to task "${newTask.title}"`,
               newTask.id
             )
-            const userNotifications = loadNotifications(formData.assignedTo)
-            saveNotifications(formData.assignedTo, [...userNotifications, notification])
+            const userNotifications = loadNotifications(newTask.assignedTo)
+            saveNotifications(newTask.assignedTo, [...userNotifications, notification])
           }
         }
         
+        // Process automation notifications
+        automationResult.notifications.forEach(notif => {
+          if (notif.userId) {
+            const userNotifications = loadNotifications(notif.userId)
+            const notification = createNotification(
+              notif.userId,
+              notif.type || 'automation',
+              'Automation',
+              notif.message,
+              newTask.id
+            )
+            saveNotifications(notif.userId, [...userNotifications, notification])
+          }
+        })
+        
+        // Process automation-created tasks
+        const allNewTasks = [newTask, ...automationResult.newTasks.map(nt => ({
+          ...nt,
+          id: generateId(),
+          status: firstColumn ? firstColumn.id : 'todo',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }))]
+        
         return {
           ...board,
-          tasks: [...boardTasks, newTask],
+          tasks: [...boardTasks, ...allNewTasks],
           activities: [...activities, activity]
         }
       }
@@ -426,13 +481,41 @@ function App() {
         }
       )
       
+      // Phase 7: Process automations for task-moved trigger
+      let updatedTask = {
+        ...task,
+        status: newStatus
+      }
+      const automationResult = processAutomations('task-moved', {
+        task: updatedTask,
+        oldStatus: task.status,
+        newStatus
+      }, currentBoardId)
+      if (automationResult.updatedTask) {
+        updatedTask = automationResult.updatedTask
+      }
+      
+      // Process automation notifications
+      automationResult.notifications.forEach(notif => {
+        if (notif.userId) {
+          const userNotifications = loadNotifications(notif.userId)
+          const notification = createNotification(
+            notif.userId,
+            notif.type || 'automation',
+            'Automation',
+            notif.message,
+            taskId
+          )
+          saveNotifications(notif.userId, [...userNotifications, notification])
+        }
+      })
+      
       return {
         ...board,
         tasks: (board.tasks || []).map(t =>
           t.id === taskId
             ? {
-                ...t,
-                status: newStatus,
+                ...updatedTask,
                 updatedAt: new Date().toISOString()
               }
             : t
@@ -733,6 +816,11 @@ function App() {
   const filteredAndSortedTasks = useMemo(() => {
     if (!tasks) return []
     
+    // Phase 7: If active filter is set, use advanced search filter
+    if (activeFilter) {
+      return applyFilter(tasks, activeFilter)
+    }
+    
     let filtered = [...tasks]
 
     // Apply search filter
@@ -897,6 +985,43 @@ function App() {
           >
             📥
           </button>
+          {/* Phase 7: Advanced features buttons */}
+          {canEdit && (
+            <>
+              <button
+                className="btn-icon"
+                onClick={() => setIsAutomationOpen(true)}
+                title="Automation Rules"
+                aria-label="Automation Rules"
+              >
+                ⚙️
+              </button>
+              <button
+                className="btn-icon"
+                onClick={() => setIsRecurringTasksOpen(true)}
+                title="Recurring Tasks"
+                aria-label="Recurring Tasks"
+              >
+                🔄
+              </button>
+              <button
+                className="btn-icon"
+                onClick={() => setIsCustomFieldsOpen(true)}
+                title="Custom Fields"
+                aria-label="Custom Fields"
+              >
+                📝
+              </button>
+            </>
+          )}
+          <button
+            className="btn-icon"
+            onClick={() => setIsAdvancedSearchOpen(true)}
+            title="Advanced Search"
+            aria-label="Advanced Search"
+          >
+            🔍
+          </button>
           {canEdit && (
             <button className="btn-create" onClick={handleCreateTask}>
               + Create Task
@@ -1018,6 +1143,7 @@ function App() {
         users={allUsers}
         currentUser={currentUser}
         allTasks={tasks}
+        boardId={currentBoardId}
       />
 
       {/* Board form modal */}
@@ -1070,6 +1196,48 @@ function App() {
         onShare={handleBoardShare}
       />
 
+      {/* Phase 7: Automation Rules modal */}
+      <AutomationRules
+        isOpen={isAutomationOpen}
+        onClose={() => setIsAutomationOpen(false)}
+        boardId={currentBoardId}
+        users={allUsers}
+      />
+
+      {/* Phase 7: Recurring Tasks modal */}
+      <RecurringTasks
+        isOpen={isRecurringTasksOpen}
+        onClose={() => setIsRecurringTasksOpen(false)}
+        boardId={currentBoardId}
+        users={allUsers}
+      />
+
+      {/* Phase 7: Advanced Search modal */}
+      <AdvancedSearch
+        isOpen={isAdvancedSearchOpen}
+        onClose={() => {
+          setIsAdvancedSearchOpen(false)
+          setActiveFilter(null) // Clear filter when closing
+        }}
+        onApplyFilter={(filter, filteredTasks) => {
+          setActiveFilter(filter)
+          // Update search/filter state to match applied filter
+          if (filter.searchQuery) setSearchQuery(filter.searchQuery)
+          if (filter.category !== 'all') setSelectedCategory(filter.category)
+          if (filter.priority !== 'all') setSelectedPriority(filter.priority)
+          if (filter.sortBy) setSortBy(filter.sortBy)
+        }}
+        tasks={tasks}
+        users={allUsers}
+      />
+
+      {/* Phase 7: Custom Fields modal */}
+      <CustomFields
+        isOpen={isCustomFieldsOpen}
+        onClose={() => setIsCustomFieldsOpen(false)}
+        boardId={currentBoardId}
+      />
+
       {/* Keyboard shortcuts handler */}
       <KeyboardShortcuts
         shortcuts={{
@@ -1085,6 +1253,10 @@ function App() {
             if (isActivityLogOpen) setIsActivityLogOpen(false)
             if (isNotificationsOpen) setIsNotificationsOpen(false)
             if (isBoardSharingOpen) setIsBoardSharingOpen(false)
+            if (isAutomationOpen) setIsAutomationOpen(false)
+            if (isRecurringTasksOpen) setIsRecurringTasksOpen(false)
+            if (isAdvancedSearchOpen) setIsAdvancedSearchOpen(false)
+            if (isCustomFieldsOpen) setIsCustomFieldsOpen(false)
           }
         }}
       />

@@ -4,6 +4,7 @@ import { formatDateForInput } from '../utils/dateUtils'
 import { getTaskTemplates, createTaskFromTemplate } from '../utils/taskTemplates'
 import { parseTimeString, formatTime } from '../utils/timeTracking'
 import { generateId } from '../utils/storage'
+import { loadCustomFields, getCustomFieldDefaultValue, validateCustomFieldValue } from '../utils/customFields'
 
 /**
  * TaskForm Component
@@ -18,9 +19,10 @@ import { generateId } from '../utils/storage'
  * @param {Array} users - Array of all users (for task assignment)
  * @param {Object} currentUser - Current logged-in user
  * @param {Array} allTasks - Array of all tasks (for dependencies)
+ * @param {string} boardId - Current board ID (for custom fields)
  */
 
-const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = null, allTasks = [] }) => {
+const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = null, allTasks = [], boardId = null }) => {
   const [selectedTemplate, setSelectedTemplate] = useState('')
   // Form state - manages input values
   const [formData, setFormData] = useState({
@@ -49,8 +51,31 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
 
   // Validation errors state
   const [errors, setErrors] = useState({})
+  
+  // Custom fields state
+  const [customFields, setCustomFields] = useState([])
+  const [customFieldValues, setCustomFieldValues] = useState({})
 
   const taskTemplates = getTaskTemplates()
+  
+  // Load custom fields when form opens
+  useEffect(() => {
+    if (isOpen && boardId) {
+      const fields = loadCustomFields(boardId)
+      setCustomFields(fields)
+      
+      // Initialize custom field values
+      const initialValues = {}
+      fields.forEach(field => {
+        if (task && task.customFields && task.customFields[field.id] !== undefined) {
+          initialValues[field.id] = task.customFields[field.id]
+        } else {
+          initialValues[field.id] = getCustomFieldDefaultValue(field)
+        }
+      })
+      setCustomFieldValues(initialValues)
+    }
+  }, [isOpen, boardId, task])
   
   // Get available users for assignment (all users except current user, or all if no current user)
   const availableUsers = users.filter(user => !currentUser || user.id !== currentUser.id)
@@ -89,6 +114,10 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
       // Set time tracking inputs
       setTimeEstimateInput(task.timeEstimate ? formatTime(task.timeEstimate) : '')
       setTimeSpentInput(task.timeSpent ? formatTime(task.timeSpent) : '')
+      // Set custom field values
+      if (task.customFields) {
+        setCustomFieldValues(task.customFields)
+      }
     } else {
       // If creating new task, reset form to defaults
       setFormData({
@@ -273,13 +302,28 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
       return
     }
 
+    // Validate custom fields
+    const customFieldErrors = {}
+    customFields.forEach(field => {
+      const validation = validateCustomFieldValue(field, customFieldValues[field.id])
+      if (!validation.valid) {
+        customFieldErrors[field.id] = validation.error
+      }
+    })
+    
+    if (Object.keys(customFieldErrors).length > 0) {
+      setErrors(prev => ({ ...prev, ...customFieldErrors }))
+      return
+    }
+
     // Convert dueDate to ISO string if provided
     // Parse time tracking inputs to minutes
     const submitData = {
       ...formData,
       dueDate: formData.dueDate ? new Date(formData.dueDate).toISOString() : null,
       timeEstimate: timeEstimateInput ? parseTimeString(timeEstimateInput) : null,
-      timeSpent: timeSpentInput ? parseTimeString(timeSpentInput) : null
+      timeSpent: timeSpentInput ? parseTimeString(timeSpentInput) : null,
+      customFields: customFieldValues
     }
 
     // Call parent's onSubmit function with form data
@@ -293,16 +337,17 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
       dueDate: '',
       category: 'other',
       assignedTo: null,
-      comments: [],
-      subtasks: [],
-      timeEstimate: null,
-      timeSpent: null,
-      dependencies: []
+        comments: [],
+        subtasks: [],
+        timeEstimate: null,
+        timeSpent: null,
+        dependencies: []
     })
     setNewComment('')
     setNewSubtaskTitle('')
     setTimeEstimateInput('')
     setTimeSpentInput('')
+    setCustomFieldValues({})
   }
 
   // Don't render if modal is not open
@@ -578,6 +623,125 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = n
                       </option>
                     ))}
                 </select>
+              </div>
+            </div>
+          )}
+          
+          {/* Custom Fields section */}
+          {customFields.length > 0 && (
+            <div className="form-group">
+              <label>Custom Fields</label>
+              <div className="custom-fields-form-section">
+                {customFields
+                  .sort((a, b) => (a.order || 0) - (b.order || 0))
+                  .map(field => (
+                    <div key={field.id} className="form-group custom-field-group">
+                      <label htmlFor={`custom-${field.id}`}>
+                        {field.name}
+                        {field.required && <span className="required">*</span>}
+                      </label>
+                      {field.type === 'text' && (
+                        <input
+                          type="text"
+                          id={`custom-${field.id}`}
+                          value={customFieldValues[field.id] || ''}
+                          onChange={(e) => setCustomFieldValues(prev => ({
+                            ...prev,
+                            [field.id]: e.target.value
+                          }))}
+                          placeholder={field.placeholder || ''}
+                          required={field.required}
+                        />
+                      )}
+                      {field.type === 'number' && (
+                        <input
+                          type="number"
+                          id={`custom-${field.id}`}
+                          value={customFieldValues[field.id] || ''}
+                          onChange={(e) => setCustomFieldValues(prev => ({
+                            ...prev,
+                            [field.id]: e.target.value ? Number(e.target.value) : ''
+                          }))}
+                          placeholder={field.placeholder || ''}
+                          required={field.required}
+                        />
+                      )}
+                      {field.type === 'date' && (
+                        <input
+                          type="date"
+                          id={`custom-${field.id}`}
+                          value={customFieldValues[field.id] ? formatDateForInput(customFieldValues[field.id]) : ''}
+                          onChange={(e) => setCustomFieldValues(prev => ({
+                            ...prev,
+                            [field.id]: e.target.value ? new Date(e.target.value).toISOString() : ''
+                          }))}
+                          required={field.required}
+                        />
+                      )}
+                      {field.type === 'select' && (
+                        <select
+                          id={`custom-${field.id}`}
+                          value={customFieldValues[field.id] || ''}
+                          onChange={(e) => setCustomFieldValues(prev => ({
+                            ...prev,
+                            [field.id]: e.target.value
+                          }))}
+                          required={field.required}
+                        >
+                          <option value="">Select...</option>
+                          {field.options.map(option => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      )}
+                      {field.type === 'checkbox' && (
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            id={`custom-${field.id}`}
+                            checked={customFieldValues[field.id] || false}
+                            onChange={(e) => setCustomFieldValues(prev => ({
+                              ...prev,
+                              [field.id]: e.target.checked
+                            }))}
+                          />
+                          {field.placeholder || 'Yes'}
+                        </label>
+                      )}
+                      {field.type === 'url' && (
+                        <input
+                          type="url"
+                          id={`custom-${field.id}`}
+                          value={customFieldValues[field.id] || ''}
+                          onChange={(e) => setCustomFieldValues(prev => ({
+                            ...prev,
+                            [field.id]: e.target.value
+                          }))}
+                          placeholder={field.placeholder || 'https://...'}
+                          required={field.required}
+                        />
+                      )}
+                      {field.type === 'email' && (
+                        <input
+                          type="email"
+                          id={`custom-${field.id}`}
+                          value={customFieldValues[field.id] || ''}
+                          onChange={(e) => setCustomFieldValues(prev => ({
+                            ...prev,
+                            [field.id]: e.target.value
+                          }))}
+                          placeholder={field.placeholder || 'email@example.com'}
+                          required={field.required}
+                        />
+                      )}
+                      {field.description && (
+                        <small className="field-description">{field.description}</small>
+                      )}
+                      {errors[field.id] && (
+                        <span className="error-message">{errors[field.id]}</span>
+                      )}
+                    </div>
+                  ))}
               </div>
             </div>
           )}
