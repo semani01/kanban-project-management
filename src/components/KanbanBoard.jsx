@@ -14,8 +14,9 @@ import Column from './Column'
  * @param {Function} onDelete - Callback function to handle task deletion
  * @param {Array} selectedTasks - Array of selected task IDs for bulk operations
  * @param {Function} onToggleTaskSelect - Callback to toggle task selection
+ * @param {Array} users - Array of all users (for displaying assigned users)
  */
-const KanbanBoard = ({ tasks, columns, onTaskMove, onEdit, onDelete, selectedTasks = [], onToggleTaskSelect }) => {
+const KanbanBoard = ({ tasks, columns, onTaskMove, onEdit, onDelete, selectedTasks = [], onToggleTaskSelect, users = [] }) => {
   // Default columns if none provided (backward compatibility)
   const boardColumns = columns || [
     { id: 'todo', title: 'To Do', wipLimit: null },
@@ -77,6 +78,7 @@ const KanbanBoard = ({ tasks, columns, onTaskMove, onEdit, onDelete, selectedTas
               onDelete={onDelete}
               selectedTasks={selectedTasks}
               onToggleTaskSelect={onToggleTaskSelect}
+              users={users}
             />
           ))}
         </div>

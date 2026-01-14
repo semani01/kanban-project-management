@@ -10,6 +10,12 @@ import KeyboardShortcuts from './components/KeyboardShortcuts'
 import BulkActions from './components/BulkActions'
 import ExportImport from './components/ExportImport'
 import PrintView from './components/PrintView'
+import LoginForm from './components/LoginForm'
+import UserProfile from './components/UserProfile'
+import ActivityLog from './components/ActivityLog'
+import NotificationsPanel from './components/NotificationsPanel'
+import NotificationButton from './components/NotificationButton'
+import BoardSharing from './components/BoardSharing'
 import { saveBoards, loadBoards, saveCurrentBoard, loadCurrentBoard, generateBoardId } from './utils/boardStorage'
 import { generateId } from './utils/storage'
 import { initialTasks } from './data/initialTasks'
@@ -17,6 +23,10 @@ import { defaultTemplate } from './utils/boardTemplates'
 import { createBoardFromTemplate } from './utils/boardUtils'
 import { getTheme, applyTheme } from './utils/theme'
 import { createHistoryManager } from './utils/undoRedo'
+import { loadCurrentUser, loadUsers } from './utils/userStorage'
+import { createActivityEntry } from './utils/activityLog'
+import { createNotification, saveNotifications, loadNotifications, getUnreadCount } from './utils/notifications'
+import { getUserBoardPermission, PERMISSIONS } from './utils/boardPermissions'
 
 /**
  * Main App Component
@@ -48,8 +58,18 @@ function App() {
   const [isPrintViewOpen, setIsPrintViewOpen] = useState(false)
   const searchInputRef = useRef(null)
 
+  // Phase 5: State for collaboration features
+  const [currentUser, setCurrentUser] = useState(null)
+  const [isActivityLogOpen, setIsActivityLogOpen] = useState(false)
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
+  const [isBoardSharingOpen, setIsBoardSharingOpen] = useState(false)
+  const [boardActivities, setBoardActivities] = useState([])
+
   // Undo/Redo history manager
   const historyManager = useRef(createHistoryManager(50))
+
+  // Get all users
+  const allUsers = useMemo(() => loadUsers(), [])
 
   // Get current board object
   const currentBoard = useMemo(() => {
@@ -105,23 +125,52 @@ function App() {
   }, [])
 
   /**
+   * Initialize user authentication on component mount
+   */
+  useEffect(() => {
+    const savedUser = loadCurrentUser()
+    if (savedUser) {
+      setCurrentUser(savedUser)
+    }
+  }, [])
+
+  /**
    * Initialize boards on component mount
    */
   useEffect(() => {
+    // Only load boards if user is logged in
+    if (!currentUser) return
+
     const loadedBoards = loadBoards()
     const savedCurrentBoardId = loadCurrentBoard()
 
+    // Filter boards based on user permissions
+    const accessibleBoards = loadedBoards.filter(board => {
+      // User owns the board
+      if (board.ownerId === currentUser.id) return true
+      // Board is shared with user
+      if (board.sharedUsers && board.sharedUsers.some(su => su.userId === currentUser.id)) return true
+      // Legacy boards without owner (assign to current user)
+      if (!board.ownerId) {
+        board.ownerId = currentUser.id
+        return true
+      }
+      return false
+    })
+
     // Initialize history with loaded boards
-    if (loadedBoards.length > 0) {
-      historyManager.current.push(loadedBoards)
+    if (accessibleBoards.length > 0) {
+      historyManager.current.push(accessibleBoards)
     }
 
-    if (loadedBoards.length === 0) {
+    if (accessibleBoards.length === 0) {
       // No boards exist - check for old data or create default
       if (!migrateOldData()) {
         // Create default board with sample tasks
         const defaultBoard = createBoardFromTemplate('My First Board', defaultTemplate)
         defaultBoard.tasks = initialTasks
+        defaultBoard.ownerId = currentUser.id
+        defaultBoard.activities = []
         const newBoards = [defaultBoard]
         saveBoards(newBoards)
         setBoards(newBoards)
@@ -129,17 +178,17 @@ function App() {
         saveCurrentBoard(defaultBoard.id)
       }
     } else {
-      setBoards(loadedBoards)
+      setBoards(accessibleBoards)
       // Set current board to saved one, or first board
-      const boardId = savedCurrentBoardId && loadedBoards.find(b => b.id === savedCurrentBoardId)
+      const boardId = savedCurrentBoardId && accessibleBoards.find(b => b.id === savedCurrentBoardId)
         ? savedCurrentBoardId
-        : loadedBoards[0].id
+        : accessibleBoards[0].id
       setCurrentBoardId(boardId)
       if (!savedCurrentBoardId) {
         saveCurrentBoard(boardId)
       }
     }
-  }, [])
+  }, [currentUser])
 
   /**
    * Save boards to localStorage whenever boards state changes
@@ -213,24 +262,56 @@ function App() {
    * @param {Object} formData - Form data containing task information
    */
   const handleSubmitTask = (formData) => {
-    if (!currentBoard) return
+    if (!currentBoard || !currentUser) return
 
     updateBoard(currentBoardId, (board) => {
       const boardTasks = board.tasks || []
+      const activities = board.activities || []
       
       if (editingTask) {
         // Update existing task
+        const oldTask = boardTasks.find(t => t.id === editingTask.id)
+        const updatedTask = {
+          ...editingTask,
+          ...formData,
+          updatedAt: new Date().toISOString()
+        }
+        
+        // Log activity
+        const activity = createActivityEntry(
+          currentUser.id,
+          currentUser.name,
+          'updated',
+          'task',
+          updatedTask.id,
+          updatedTask.title
+        )
+        
+        // Check if assignment changed
+        if (formData.assignedTo !== oldTask.assignedTo) {
+          if (formData.assignedTo) {
+            const assignedUser = allUsers.find(u => u.id === formData.assignedTo)
+            // Create notification for assigned user
+            if (assignedUser) {
+              const notification = createNotification(
+                formData.assignedTo,
+                'task_assigned',
+                'Task Assigned',
+                `${currentUser.name} assigned you to task "${updatedTask.title}"`,
+                updatedTask.id
+              )
+              const userNotifications = loadNotifications(formData.assignedTo)
+              saveNotifications(formData.assignedTo, [...userNotifications, notification])
+            }
+          }
+        }
+        
         return {
           ...board,
           tasks: boardTasks.map(task =>
-            task.id === editingTask.id
-              ? {
-                  ...task,
-                  ...formData,
-                  updatedAt: new Date().toISOString()
-                }
-              : task
-          )
+            task.id === editingTask.id ? updatedTask : task
+          ),
+          activities: [...activities, activity]
         }
       } else {
         // Create new task - add to first column
@@ -242,9 +323,37 @@ function App() {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }
+        
+        // Log activity
+        const activity = createActivityEntry(
+          currentUser.id,
+          currentUser.name,
+          'created',
+          'task',
+          newTask.id,
+          newTask.title
+        )
+        
+        // Create notification if task is assigned
+        if (formData.assignedTo) {
+          const assignedUser = allUsers.find(u => u.id === formData.assignedTo)
+          if (assignedUser) {
+            const notification = createNotification(
+              formData.assignedTo,
+              'task_assigned',
+              'Task Assigned',
+              `${currentUser.name} assigned you to task "${newTask.title}"`,
+              newTask.id
+            )
+            const userNotifications = loadNotifications(formData.assignedTo)
+            saveNotifications(formData.assignedTo, [...userNotifications, notification])
+          }
+        }
+        
         return {
           ...board,
-          tasks: [...boardTasks, newTask]
+          tasks: [...boardTasks, newTask],
+          activities: [...activities, activity]
         }
       }
     })
@@ -257,13 +366,29 @@ function App() {
    * @param {string} taskId - ID of the task to delete
    */
   const handleDeleteTask = (taskId) => {
-    if (!currentBoard) return
+    if (!currentBoard || !currentUser) return
+    
+    const task = currentBoard.tasks?.find(t => t.id === taskId)
+    if (!task) return
     
     if (window.confirm('Are you sure you want to delete this task?')) {
-      updateBoard(currentBoardId, (board) => ({
-        ...board,
-        tasks: (board.tasks || []).filter(task => task.id !== taskId)
-      }))
+      updateBoard(currentBoardId, (board) => {
+        const activities = board.activities || []
+        const activity = createActivityEntry(
+          currentUser.id,
+          currentUser.name,
+          'deleted',
+          'task',
+          taskId,
+          task.title
+        )
+        
+        return {
+          ...board,
+          tasks: (board.tasks || []).filter(task => task.id !== taskId),
+          activities: [...activities, activity]
+        }
+      })
     }
   }
 
@@ -273,20 +398,43 @@ function App() {
    * @param {string} newStatus - New status (column ID)
    */
   const handleTaskMove = (taskId, newStatus) => {
-    if (!currentBoard) return
+    if (!currentBoard || !currentUser) return
 
-    updateBoard(currentBoardId, (board) => ({
-      ...board,
-      tasks: (board.tasks || []).map(task =>
-        task.id === taskId
-          ? {
-              ...task,
-              status: newStatus,
-              updatedAt: new Date().toISOString()
-            }
-          : task
+    const task = currentBoard.tasks?.find(t => t.id === taskId)
+    if (!task) return
+
+    const oldColumn = currentBoard.columns.find(col => col.id === task.status)
+    const newColumn = currentBoard.columns.find(col => col.id === newStatus)
+
+    updateBoard(currentBoardId, (board) => {
+      const activities = board.activities || []
+      const activity = createActivityEntry(
+        currentUser.id,
+        currentUser.name,
+        'moved',
+        'task',
+        taskId,
+        task.title,
+        {
+          from: oldColumn?.title || task.status,
+          to: newColumn?.title || newStatus
+        }
       )
-    }))
+      
+      return {
+        ...board,
+        tasks: (board.tasks || []).map(t =>
+          t.id === taskId
+            ? {
+                ...t,
+                status: newStatus,
+                updatedAt: new Date().toISOString()
+              }
+            : t
+        ),
+        activities: [...activities, activity]
+      }
+    })
   }
 
   /**
@@ -308,8 +456,25 @@ function App() {
   const handleCreateBoard = (newBoard) => {
     const boardWithId = {
       ...newBoard,
-      id: generateBoardId()
+      id: generateBoardId(),
+      ownerId: currentUser?.id || null,
+      activities: [],
+      sharedUsers: []
     }
+    
+    // Add activity log entry
+    if (currentUser) {
+      const activity = createActivityEntry(
+        currentUser.id,
+        currentUser.name,
+        'created',
+        'board',
+        boardWithId.id,
+        boardWithId.name
+      )
+      boardWithId.activities = [activity]
+    }
+    
     setBoards(prevBoards => [...prevBoards, boardWithId])
     setCurrentBoardId(boardWithId.id)
     setIsBoardFormOpen(false)
@@ -471,6 +636,93 @@ function App() {
   }
 
   /**
+   * Phase 5: Handles user login
+   */
+  const handleLogin = (user) => {
+    setCurrentUser(user)
+    // Reload boards after login
+    const loadedBoards = loadBoards()
+    const accessibleBoards = loadedBoards.filter(board => {
+      if (board.ownerId === user.id) return true
+      if (board.sharedUsers && board.sharedUsers.some(su => su.userId === user.id)) return true
+      if (!board.ownerId) {
+        board.ownerId = user.id
+        return true
+      }
+      return false
+    })
+    setBoards(accessibleBoards)
+    if (accessibleBoards.length > 0) {
+      setCurrentBoardId(accessibleBoards[0].id)
+      saveCurrentBoard(accessibleBoards[0].id)
+    }
+  }
+
+  /**
+   * Phase 5: Handles user logout
+   */
+  const handleLogout = () => {
+    setCurrentUser(null)
+    setBoards([])
+    setCurrentBoardId(null)
+  }
+
+  /**
+   * Phase 5: Handles user profile update
+   */
+  const handleUserUpdate = (updatedUser) => {
+    setCurrentUser(updatedUser)
+  }
+
+  /**
+   * Phase 5: Handles board sharing
+   */
+  const handleBoardShare = (updatedBoard) => {
+    updateBoard(currentBoardId, () => updatedBoard)
+    
+    // Create notifications for newly shared users
+    if (currentUser && updatedBoard.sharedUsers) {
+      updatedBoard.sharedUsers.forEach(sharedUser => {
+        const notification = createNotification(
+          sharedUser.userId,
+          'board_shared',
+          'Board Shared',
+          `${currentUser.name} shared board "${updatedBoard.name}" with you`,
+          updatedBoard.id,
+          { permission: sharedUser.permission }
+        )
+        const userNotifications = loadNotifications(sharedUser.userId)
+        saveNotifications(sharedUser.userId, [...userNotifications, notification])
+      })
+    }
+  }
+
+  /**
+   * Phase 5: Update board activities when board changes
+   */
+  useEffect(() => {
+    if (currentBoard) {
+      setBoardActivities(currentBoard.activities || [])
+    }
+  }, [currentBoard])
+
+  /**
+   * Phase 5: Get user's permission for current board
+   */
+  const userBoardPermission = useMemo(() => {
+    if (!currentBoard || !currentUser) return null
+    return getUserBoardPermission(currentBoard, currentUser.id)
+  }, [currentBoard, currentUser])
+
+  /**
+   * Phase 5: Check if user can edit
+   */
+  const canEdit = useMemo(() => {
+    if (!userBoardPermission) return false
+    return userBoardPermission === PERMISSIONS.OWNER || userBoardPermission === PERMISSIONS.EDITOR
+  }, [userBoardPermission])
+
+  /**
    * Filters and sorts tasks based on current search, filter, and sort settings
    */
   const filteredAndSortedTasks = useMemo(() => {
@@ -524,16 +776,33 @@ function App() {
     return filtered
   }, [tasks, searchQuery, selectedCategory, selectedPriority, sortBy])
 
+  // Phase 5: Show login form if user is not logged in
+  if (!currentUser) {
+    return <LoginForm onLogin={handleLogin} />
+  }
+
   // Show message if no boards exist
-  if (boards.length === 0) {
+  if (boards.length === 0 && currentUser) {
     return (
       <div className="app">
         <header className="app-header">
-          <h1>Kanban Project Management</h1>
+          <div className="app-header-left">
+            <h1>Kanban Project Management</h1>
+          </div>
+          <div className="app-header-right">
+            <UserProfile
+              currentUser={currentUser}
+              onLogout={handleLogout}
+              onUpdate={handleUserUpdate}
+            />
+          </div>
         </header>
         <main className="app-main">
           <div className="no-boards-message">
-            <p>No boards available. Creating default board...</p>
+            <p>No boards available. Create your first board!</p>
+            <button className="btn-create" onClick={() => setIsBoardFormOpen(true)}>
+              + Create Board
+            </button>
           </div>
         </main>
       </div>
@@ -545,7 +814,16 @@ function App() {
     return (
       <div className="app">
         <header className="app-header">
-          <h1>Kanban Project Management</h1>
+          <div className="app-header-left">
+            <h1>Kanban Project Management</h1>
+          </div>
+          <div className="app-header-right">
+            <UserProfile
+              currentUser={currentUser}
+              onLogout={handleLogout}
+              onUpdate={handleUserUpdate}
+            />
+          </div>
         </header>
         <main className="app-main">
           <div className="no-boards-message">
@@ -573,6 +851,31 @@ function App() {
         </div>
         <div className="app-header-right">
           <ThemeToggle />
+          {/* Phase 5: Activity log button */}
+          <button
+            className="btn-icon"
+            onClick={() => setIsActivityLogOpen(true)}
+            title="Activity log"
+            aria-label="Activity log"
+          >
+            📋
+          </button>
+          {/* Phase 5: Notifications button */}
+          <NotificationButton
+            userId={currentUser?.id}
+            onClick={() => setIsNotificationsOpen(true)}
+          />
+          {/* Phase 5: Board sharing button (only for owners/editors) */}
+          {canEdit && (
+            <button
+              className="btn-icon"
+              onClick={() => setIsBoardSharingOpen(true)}
+              title="Share board"
+              aria-label="Share board"
+            >
+              👥
+            </button>
+          )}
           <button
             className="btn-icon"
             onClick={() => setIsPrintViewOpen(true)}
@@ -589,9 +892,17 @@ function App() {
           >
             📥
           </button>
-          <button className="btn-create" onClick={handleCreateTask}>
-            + Create Task
-          </button>
+          {canEdit && (
+            <button className="btn-create" onClick={handleCreateTask}>
+              + Create Task
+            </button>
+          )}
+          {/* Phase 5: User profile */}
+          <UserProfile
+            currentUser={currentUser}
+            onLogout={handleLogout}
+            onUpdate={handleUserUpdate}
+          />
         </div>
       </header>
 
@@ -632,10 +943,11 @@ function App() {
               tasks={filteredAndSortedTasks}
               columns={currentBoard.columns}
               onTaskMove={handleTaskMove}
-              onEdit={handleEditTask}
-              onDelete={handleDeleteTask}
+              onEdit={canEdit ? handleEditTask : null}
+              onDelete={canEdit ? handleDeleteTask : null}
               selectedTasks={selectedTasks}
-              onToggleTaskSelect={handleToggleTaskSelect}
+              onToggleTaskSelect={canEdit ? handleToggleTaskSelect : null}
+              users={allUsers}
             />
           </div>
 
@@ -652,6 +964,8 @@ function App() {
         isOpen={isFormOpen}
         onClose={handleCloseForm}
         onSubmit={handleSubmitTask}
+        users={allUsers}
+        currentUser={currentUser}
       />
 
       {/* Board form modal */}
@@ -676,10 +990,38 @@ function App() {
         onClose={() => setIsPrintViewOpen(false)}
       />
 
+      {/* Phase 5: Activity log modal */}
+      <ActivityLog
+        activities={boardActivities}
+        users={allUsers}
+        isOpen={isActivityLogOpen}
+        onClose={() => setIsActivityLogOpen(false)}
+      />
+
+      {/* Phase 5: Notifications panel */}
+      <NotificationsPanel
+        userId={currentUser?.id}
+        isOpen={isNotificationsOpen}
+        onClose={() => setIsNotificationsOpen(false)}
+        onNotificationClick={(notification) => {
+          // Handle notification click (e.g., navigate to task/board)
+          setIsNotificationsOpen(false)
+        }}
+      />
+
+      {/* Phase 5: Board sharing modal */}
+      <BoardSharing
+        isOpen={isBoardSharingOpen}
+        onClose={() => setIsBoardSharingOpen(false)}
+        board={currentBoard}
+        currentUser={currentUser}
+        onShare={handleBoardShare}
+      />
+
       {/* Keyboard shortcuts handler */}
       <KeyboardShortcuts
         shortcuts={{
-          onCreateTask: handleCreateTask,
+          onCreateTask: canEdit ? handleCreateTask : null,
           onSearch: handleFocusSearch,
           onUndo: handleUndo,
           onRedo: handleRedo,
@@ -688,6 +1030,9 @@ function App() {
             if (isBoardFormOpen) setIsBoardFormOpen(false)
             if (isExportImportOpen) setIsExportImportOpen(false)
             if (isPrintViewOpen) setIsPrintViewOpen(false)
+            if (isActivityLogOpen) setIsActivityLogOpen(false)
+            if (isNotificationsOpen) setIsNotificationsOpen(false)
+            if (isBoardSharingOpen) setIsBoardSharingOpen(false)
           }
         }}
       />

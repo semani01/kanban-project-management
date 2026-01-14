@@ -13,9 +13,11 @@ import { getTaskTemplates, createTaskFromTemplate } from '../utils/taskTemplates
  * @param {boolean} isOpen - Whether the modal is visible
  * @param {Function} onClose - Callback function to close the modal
  * @param {Function} onSubmit - Callback function to handle form submission
+ * @param {Array} users - Array of all users (for task assignment)
+ * @param {Object} currentUser - Current logged-in user
  */
 
-const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
+const TaskForm = ({ task, isOpen, onClose, onSubmit, users = [], currentUser = null }) => {
   const [selectedTemplate, setSelectedTemplate] = useState('')
   // Form state - manages input values
   const [formData, setFormData] = useState({
@@ -24,6 +26,7 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
     priority: 'medium',
     dueDate: '',
     category: 'other',
+    assignedTo: null,
     comments: []
   })
 
@@ -34,6 +37,9 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
   const [errors, setErrors] = useState({})
 
   const taskTemplates = getTaskTemplates()
+  
+  // Get available users for assignment (all users except current user, or all if no current user)
+  const availableUsers = users.filter(user => !currentUser || user.id !== currentUser.id)
 
   // Handle template selection
   const handleTemplateSelect = (templateId) => {
@@ -59,6 +65,7 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
         priority: task.priority || 'medium',
         dueDate: task.dueDate ? formatDateForInput(task.dueDate) : '',
         category: task.category || 'other',
+        assignedTo: task.assignedTo || null,
         comments: task.comments || []
       })
     } else {
@@ -69,6 +76,7 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
         priority: 'medium',
         dueDate: '',
         category: 'other',
+        assignedTo: null,
         comments: []
       })
     }
@@ -182,6 +190,7 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
       priority: 'medium',
       dueDate: '',
       category: 'other',
+      assignedTo: null,
       comments: []
     })
     setNewComment('')
@@ -302,6 +311,26 @@ const TaskForm = ({ task, isOpen, onClose, onSubmit }) => {
               ))}
             </select>
           </div>
+
+          {/* Assign to user */}
+          {availableUsers.length > 0 && (
+            <div className="form-group">
+              <label htmlFor="assignedTo">Assign To</label>
+              <select
+                id="assignedTo"
+                name="assignedTo"
+                value={formData.assignedTo || ''}
+                onChange={(e) => setFormData({ ...formData, assignedTo: e.target.value || null })}
+              >
+                <option value="">Unassigned</option>
+                {availableUsers.map(user => (
+                  <option key={user.id} value={user.id}>
+                    {user.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Comments section */}
           <div className="form-group">

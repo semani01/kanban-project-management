@@ -2,6 +2,7 @@ import React from 'react'
 import { formatDate, isOverdue, isDueSoon, isToday } from '../utils/dateUtils'
 import { getCategoryById } from '../utils/categories'
 import { parseMarkdown } from '../utils/markdown'
+import UserAvatar from './UserAvatar'
 
 /**
  * Task Component
@@ -13,8 +14,9 @@ import { parseMarkdown } from '../utils/markdown'
  * @param {Function} onDelete - Callback function to handle task deletion
  * @param {boolean} isSelected - Whether the task is selected for bulk operations
  * @param {Function} onToggleSelect - Callback to toggle task selection
+ * @param {Array} users - Array of all users (for displaying assigned user)
  */
-const Task = ({ task, onEdit, onDelete, isSelected = false, onToggleSelect }) => {
+const Task = ({ task, onEdit, onDelete, isSelected = false, onToggleSelect, users = [] }) => {
   // Priority color mapping for visual indicators
   const priorityColors = {
     high: '#ef4444',    // Red for high priority
@@ -99,6 +101,18 @@ const Task = ({ task, onEdit, onDelete, isSelected = false, onToggleSelect }) =>
           <span>{formatDate(task.dueDate)}</span>
           {isOverdue(task.dueDate) && <span className="overdue-label">Overdue</span>}
           {isToday(task.dueDate) && <span className="today-label">Today</span>}
+        </div>
+      )}
+      
+      {/* Assigned user */}
+      {task.assignedTo && (
+        <div className="task-assigned">
+          <span className="assigned-label">Assigned to:</span>
+          <UserAvatar
+            user={users.find(u => u.id === task.assignedTo)}
+            size={24}
+            showName={true}
+          />
         </div>
       )}
       
