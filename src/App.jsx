@@ -22,20 +22,21 @@ import AutomationRules from './components/AutomationRules'
 import RecurringTasks from './components/RecurringTasks'
 import AdvancedSearch from './components/AdvancedSearch'
 import CustomFields from './components/CustomFields'
-import { saveBoards, loadBoards, saveCurrentBoard, loadCurrentBoard, generateBoardId } from './utils/boardStorage'
+import LoadingSpinner from './components/LoadingSpinner'
+import LoadingSkeleton from './components/LoadingSkeleton'
 import { generateId } from './utils/storage'
 import { initialTasks } from './data/initialTasks'
 import { defaultTemplate } from './utils/boardTemplates'
 import { createBoardFromTemplate } from './utils/boardUtils'
 import { getTheme, applyTheme } from './utils/theme'
 import { createHistoryManager } from './utils/undoRedo'
-import { loadCurrentUser, loadUsers } from './utils/userStorage'
-import { createActivityEntry } from './utils/activityLog'
-import { createNotification, saveNotifications, loadNotifications, getUnreadCount } from './utils/notifications'
+import { getCurrentUser, setCurrentUser, authAPI } from './services/api'
+import api from './services/api'
 import { getUserBoardPermission, PERMISSIONS } from './utils/boardPermissions'
 import { processAutomations } from './utils/automation'
-import { generateRecurringTasks } from './utils/recurringTasks'
+// Phase 8: Recurring tasks generation handled by backend
 import { applyFilter } from './utils/advancedSearch'
+import { logEnvironmentWarnings } from './utils/envValidation'
 
 /**
  * Main App Component
@@ -84,11 +85,13 @@ function App() {
   const [isCustomFieldsOpen, setIsCustomFieldsOpen] = useState(false)
   const [activeFilter, setActiveFilter] = useState(null)
 
+  // Phase 8: Loading and error states
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [allUsers, setAllUsers] = useState([])
+
   // Undo/Redo history manager
   const historyManager = useRef(createHistoryManager(50))
-
-  // Get all users
-  const allUsers = useMemo(() => loadUsers(), [])
 
   // Get current board object
   const currentBoard = useMemo(() => {
@@ -100,40 +103,7 @@ function App() {
     return currentBoard ? (currentBoard.tasks || []) : []
   }, [currentBoard])
 
-  /**
-   * Migrates old task data to new board structure
-   * This handles users upgrading from Phase 1/2 to Phase 3
-   */
-  const migrateOldData = () => {
-    try {
-      // Try to load old tasks
-      const oldTasks = localStorage.getItem('kanban-tasks')
-      if (oldTasks) {
-        const parsedTasks = JSON.parse(oldTasks)
-        if (parsedTasks.length > 0) {
-          // Create a default board with old tasks
-          const migratedBoard = createBoardFromTemplate('My Board', defaultTemplate)
-          migratedBoard.tasks = parsedTasks
-          migratedBoard.name = 'Migrated Board'
-          
-          // Save the migrated board
-          const existingBoards = loadBoards()
-          const updatedBoards = [...existingBoards, migratedBoard]
-          saveBoards(updatedBoards)
-          setBoards(updatedBoards)
-          setCurrentBoardId(migratedBoard.id)
-          saveCurrentBoard(migratedBoard.id)
-          
-          // Clear old storage
-          localStorage.removeItem('kanban-tasks')
-          return true
-        }
-      }
-    } catch (error) {
-      console.error('Error migrating old data:', error)
-    }
-    return false
-  }
+  // Phase 8: Migration removed - all data now stored in backend database
 
   /**
    * Initialize theme on component mount
@@ -141,124 +111,205 @@ function App() {
   useEffect(() => {
     const theme = getTheme()
     applyTheme(theme)
+    // Log environment warnings in development
+    logEnvironmentWarnings()
   }, [])
 
   /**
    * Initialize user authentication on component mount
+   * Phase 8: Check for saved user from API token
    */
   useEffect(() => {
-    const savedUser = loadCurrentUser()
+    const savedUser = getCurrentUser()
     if (savedUser) {
       setCurrentUser(savedUser)
+      // Verify token is still valid by fetching current user
+      api.users.getCurrent()
+        .then(user => {
+          setCurrentUser(user)
+          setCurrentUser(user) // Update stored user
+        })
+        .catch(() => {
+          // Token invalid, clear user
+          authAPI.logout()
+          setCurrentUser(null)
+        })
     }
   }, [])
 
   /**
+   * Load all users when current user changes
+   */
+  useEffect(() => {
+    if (currentUser) {
+      api.users.getAll()
+        .then(users => setAllUsers(users))
+        .catch(err => console.error('Failed to load users:', err))
+    }
+  }, [currentUser])
+
+  /**
    * Initialize boards on component mount
+   * Phase 8: Load boards from API
    */
   useEffect(() => {
     // Only load boards if user is logged in
     if (!currentUser) return
 
-    const loadedBoards = loadBoards()
-    const savedCurrentBoardId = loadCurrentBoard()
+    setLoading(true)
+    setError(null)
 
-    // Filter boards based on user permissions
-    const accessibleBoards = loadedBoards.filter(board => {
-      // User owns the board
-      if (board.ownerId === currentUser.id) return true
-      // Board is shared with user
-      if (board.sharedUsers && board.sharedUsers.some(su => su.userId === currentUser.id)) return true
-      // Legacy boards without owner (assign to current user)
-      if (!board.ownerId) {
-        board.ownerId = currentUser.id
-        return true
-      }
-      return false
-    })
+    api.boards.getAll()
+      .then(response => {
+        // Combine owned and shared boards
+        const allBoards = [
+          ...(response.owned || []).map(b => ({ ...b, ownerId: b.owner_id })),
+          ...(response.shared || []).map(b => ({ ...b, ownerId: b.owner_id }))
+        ]
 
-    // Initialize history with loaded boards
-    if (accessibleBoards.length > 0) {
-      historyManager.current.push(accessibleBoards)
-      
-      // Phase 7: Generate recurring tasks for all boards
-      accessibleBoards.forEach(board => {
-        const generatedTasks = generateRecurringTasks(board.id)
-        if (generatedTasks.length > 0) {
-          updateBoard(board.id, (b) => ({
-            ...b,
-            tasks: [...(b.tasks || []), ...generatedTasks]
-          }))
+        if (allBoards.length === 0) {
+          // Create default board
+          const defaultBoard = createBoardFromTemplate('My First Board', defaultTemplate)
+          defaultBoard.ownerId = currentUser.id
+          defaultBoard.activities = []
+          
+          api.boards.create({
+            name: defaultBoard.name,
+            description: defaultBoard.description,
+            columns: defaultBoard.columns
+          })
+            .then(newBoard => {
+              // Add initial tasks
+              const taskPromises = initialTasks.map(task =>
+                api.tasks.create({
+                  boardId: newBoard.id,
+                  title: task.title,
+                  description: task.description,
+                  status: task.status,
+                  priority: task.priority,
+                  category: task.category,
+                  dueDate: task.dueDate
+                })
+              )
+              
+              return Promise.all(taskPromises)
+                .then(() => {
+                  // Reload board with tasks
+                  return api.boards.getById(newBoard.id)
+                })
+            })
+            .then(fullBoard => {
+              // Transform snake_case to camelCase for frontend compatibility
+              const transformedBoard = {
+                ...fullBoard,
+                ownerId: fullBoard.owner_id || fullBoard.ownerId,
+                sharedUsers: fullBoard.shared_users || fullBoard.sharedUsers || []
+              }
+              setBoards([transformedBoard])
+              setCurrentBoardId(transformedBoard.id)
+              localStorage.setItem('current_board_id', transformedBoard.id)
+            })
+            .catch(err => {
+              console.error('Failed to create default board:', err)
+              setError('Failed to create default board')
+            })
+            .finally(() => setLoading(false))
+        } else {
+          setBoards(allBoards)
+          // Set current board to first board or saved one
+          const savedBoardId = localStorage.getItem('current_board_id')
+          const boardId = savedBoardId && allBoards.find(b => b.id === savedBoardId)
+            ? savedBoardId
+            : allBoards[0].id
+          setCurrentBoardId(boardId)
+          localStorage.setItem('current_board_id', boardId)
+          
+          // Load full board data with tasks
+          loadBoardData(boardId)
+          setLoading(false)
         }
       })
-    }
-
-    if (accessibleBoards.length === 0) {
-      // No boards exist - check for old data or create default
-      if (!migrateOldData()) {
-        // Create default board with sample tasks
-        const defaultBoard = createBoardFromTemplate('My First Board', defaultTemplate)
-        defaultBoard.tasks = initialTasks
-        defaultBoard.ownerId = currentUser.id
-        defaultBoard.activities = []
-        const newBoards = [defaultBoard]
-        saveBoards(newBoards)
-        setBoards(newBoards)
-        setCurrentBoardId(defaultBoard.id)
-        saveCurrentBoard(defaultBoard.id)
-      }
-    } else {
-      setBoards(accessibleBoards)
-      // Set current board to saved one, or first board
-      const boardId = savedCurrentBoardId && accessibleBoards.find(b => b.id === savedCurrentBoardId)
-        ? savedCurrentBoardId
-        : accessibleBoards[0].id
-      setCurrentBoardId(boardId)
-      if (!savedCurrentBoardId) {
-        saveCurrentBoard(boardId)
-      }
-    }
+      .catch(err => {
+        console.error('Failed to load boards:', err)
+        setError('Failed to load boards')
+        setLoading(false)
+      })
   }, [currentUser])
 
   /**
-   * Save boards to localStorage whenever boards state changes
-   * Also update history for undo/redo
+   * Load full board data including tasks
    */
-  useEffect(() => {
-    if (boards.length > 0) {
-      saveBoards(boards)
-      // Don't push to history on initial load
-      if (historyManager.current.getCurrent() !== null) {
-        historyManager.current.push(boards)
+  const loadBoardData = async (boardId) => {
+    if (!boardId) return
+
+    try {
+      const board = await api.boards.getById(boardId)
+      // Transform snake_case to camelCase for frontend compatibility
+      const transformedBoard = {
+        ...board,
+        ownerId: board.owner_id || board.ownerId,
+        sharedUsers: board.shared_users || board.sharedUsers || []
       }
+      setBoards(prev => prev.map(b => b.id === boardId ? transformedBoard : b))
+      setBoardActivities(board.activities || [])
+    } catch (err) {
+      console.error('Failed to load board data:', err)
     }
-  }, [boards])
+  }
 
   /**
    * Update current board when switching
+   * Phase 8: Load board data when switching
    */
   useEffect(() => {
     if (currentBoardId) {
-      saveCurrentBoard(currentBoardId)
+      localStorage.setItem('current_board_id', currentBoardId)
+      loadBoardData(currentBoardId)
     }
   }, [currentBoardId])
 
   /**
    * Updates a specific board in the boards array
+   * Phase 8: Update via API
    * @param {string} boardId - ID of the board to update
    * @param {Function} updateFn - Function that receives board and returns updated board
    */
-  const updateBoard = (boardId, updateFn) => {
-    setBoards(prevBoards => {
-      const updated = prevBoards.map(board =>
-        board.id === boardId ? { ...updateFn(board), updatedAt: new Date().toISOString() } : board
-      )
-      // Update history after state update
-      setTimeout(() => {
-        historyManager.current.push(updated)
-      }, 0)
-      return updated
-    })
+  const updateBoard = async (boardId, updateFn) => {
+    const board = boards.find(b => b.id === boardId)
+    if (!board) return
+
+    const updatedBoard = updateFn(board)
+    
+    try {
+      // Update via API
+      const apiData = {
+        name: updatedBoard.name,
+        description: updatedBoard.description,
+        columns: updatedBoard.columns,
+        archived: updatedBoard.archived || false
+      }
+      
+      const savedBoard = await api.boards.update(boardId, apiData)
+      
+      // Transform snake_case to camelCase for frontend compatibility
+      const transformedBoard = {
+        ...savedBoard,
+        ownerId: savedBoard.owner_id || savedBoard.ownerId,
+        sharedUsers: savedBoard.shared_users || savedBoard.sharedUsers || []
+      }
+      
+      // Update local state
+      setBoards(prevBoards => prevBoards.map(b => 
+        b.id === boardId ? transformedBoard : b
+      ))
+    } catch (error) {
+      console.error('Failed to update board:', error)
+      setError('Failed to update board')
+      // Revert local state on error
+      setBoards(prevBoards => prevBoards.map(b => 
+        b.id === boardId ? board : b
+      ))
+    }
   }
 
   /**
@@ -289,166 +340,114 @@ function App() {
 
   /**
    * Handles form submission for both creating and updating tasks
+   * Phase 8: Use API for task operations
    * @param {Object} formData - Form data containing task information
    */
-  const handleSubmitTask = (formData) => {
+  const handleSubmitTask = async (formData) => {
     if (!currentBoard || !currentUser) return
 
-    updateBoard(currentBoardId, (board) => {
-      const boardTasks = board.tasks || []
-      const activities = board.activities || []
-      
+    setLoading(true)
+    setError(null)
+
+    try {
+      const firstColumn = currentBoard.columns[0]
+      const taskData = {
+        ...formData,
+        status: formData.status || (firstColumn ? firstColumn.id : 'todo')
+      }
+
       if (editingTask) {
-        // Update existing task
-        const oldTask = boardTasks.find(t => t.id === editingTask.id)
-        const updatedTask = {
-          ...editingTask,
-          ...formData,
-          updatedAt: new Date().toISOString()
-        }
+        // Update existing task via API
+        const updatedTask = await api.tasks.update(editingTask.id, taskData)
         
-        // Log activity
-        const activity = createActivityEntry(
-          currentUser.id,
-          currentUser.name,
-          'updated',
-          'task',
-          updatedTask.id,
-          updatedTask.title
-        )
-        
-        // Check if assignment changed
-        if (formData.assignedTo !== oldTask.assignedTo) {
-          if (formData.assignedTo) {
-            const assignedUser = allUsers.find(u => u.id === formData.assignedTo)
-            // Create notification for assigned user
-            if (assignedUser) {
-              const notification = createNotification(
-                formData.assignedTo,
-                'task_assigned',
-                'Task Assigned',
-                `${currentUser.name} assigned you to task "${updatedTask.title}"`,
-                updatedTask.id
-              )
-              const userNotifications = loadNotifications(formData.assignedTo)
-              saveNotifications(formData.assignedTo, [...userNotifications, notification])
+        // Update local board state
+        setBoards(prevBoards => prevBoards.map(board => {
+          if (board.id === currentBoardId) {
+            return {
+              ...board,
+              tasks: (board.tasks || []).map(t => t.id === editingTask.id ? updatedTask : t)
             }
           }
-        }
-        
-        return {
-          ...board,
-          tasks: boardTasks.map(task =>
-            task.id === editingTask.id ? updatedTask : task
-          ),
-          activities: [...activities, activity]
+          return board
+        }))
+
+        // Check if assignment changed and create notification
+        if (formData.assignedTo && formData.assignedTo !== editingTask.assignedTo) {
+          // Notification is created by backend
         }
       } else {
-        // Create new task - add to first column
-        const firstColumn = board.columns[0]
-        let newTask = {
-          id: generateId(),
-          ...formData,
-          status: firstColumn ? firstColumn.id : 'todo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }
-        
-        // Phase 7: Process automations for task-created trigger
-        const automationResult = processAutomations('task-created', { task: newTask }, currentBoardId)
-        if (automationResult.updatedTask) {
-          newTask = automationResult.updatedTask
-        }
-        
-        // Log activity
-        const activity = createActivityEntry(
-          currentUser.id,
-          currentUser.name,
-          'created',
-          'task',
-          newTask.id,
-          newTask.title
-        )
-        
-        // Create notification if task is assigned
-        if (newTask.assignedTo) {
-          const assignedUser = allUsers.find(u => u.id === newTask.assignedTo)
-          if (assignedUser) {
-            const notification = createNotification(
-              newTask.assignedTo,
-              'task_assigned',
-              'Task Assigned',
-              `${currentUser.name} assigned you to task "${newTask.title}"`,
-              newTask.id
-            )
-            const userNotifications = loadNotifications(newTask.assignedTo)
-            saveNotifications(newTask.assignedTo, [...userNotifications, notification])
-          }
-        }
-        
-        // Process automation notifications
-        automationResult.notifications.forEach(notif => {
-          if (notif.userId) {
-            const userNotifications = loadNotifications(notif.userId)
-            const notification = createNotification(
-              notif.userId,
-              notif.type || 'automation',
-              'Automation',
-              notif.message,
-              newTask.id
-            )
-            saveNotifications(notif.userId, [...userNotifications, notification])
-          }
+        // Create new task via API
+        const newTask = await api.tasks.create({
+          boardId: currentBoardId,
+          ...taskData
         })
-        
-        // Process automation-created tasks
-        const allNewTasks = [newTask, ...automationResult.newTasks.map(nt => ({
-          ...nt,
-          id: generateId(),
-          status: firstColumn ? firstColumn.id : 'todo',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }))]
-        
-        return {
-          ...board,
-          tasks: [...boardTasks, ...allNewTasks],
-          activities: [...activities, activity]
+
+        // Update local board state
+        setBoards(prevBoards => prevBoards.map(board => {
+          if (board.id === currentBoardId) {
+            return {
+              ...board,
+              tasks: [...(board.tasks || []), newTask]
+            }
+          }
+          return board
+        }))
+
+        // Phase 7: Process automations (client-side for now)
+        // Note: In production, automations should run on backend
+        const automationResult = processAutomations('task-created', { task: newTask }, currentBoardId)
+        if (automationResult.updatedTask && automationResult.updatedTask.id !== newTask.id) {
+          // Update task if automation changed it
+          await api.tasks.update(newTask.id, automationResult.updatedTask)
         }
       }
-    })
-    
-    handleCloseForm()
+
+      // Reload board data to get latest activities
+      await loadBoardData(currentBoardId)
+      handleCloseForm()
+    } catch (error) {
+      console.error('Failed to save task:', error)
+      setError('Failed to save task: ' + error.message)
+    } finally {
+      setLoading(false)
+    }
   }
 
   /**
    * Deletes a task by ID
+   * Phase 8: Use API for deletion
    * @param {string} taskId - ID of the task to delete
    */
-  const handleDeleteTask = (taskId) => {
+  const handleDeleteTask = async (taskId) => {
     if (!currentBoard || !currentUser) return
     
     const task = currentBoard.tasks?.find(t => t.id === taskId)
     if (!task) return
     
     if (window.confirm('Are you sure you want to delete this task?')) {
-      updateBoard(currentBoardId, (board) => {
-        const activities = board.activities || []
-        const activity = createActivityEntry(
-          currentUser.id,
-          currentUser.name,
-          'deleted',
-          'task',
-          taskId,
-          task.title
-        )
+      setLoading(true)
+      try {
+        await api.tasks.delete(taskId)
         
-        return {
-          ...board,
-          tasks: (board.tasks || []).filter(task => task.id !== taskId),
-          activities: [...activities, activity]
-        }
-      })
+        // Update local state
+        setBoards(prevBoards => prevBoards.map(board => {
+          if (board.id === currentBoardId) {
+            return {
+              ...board,
+              tasks: (board.tasks || []).filter(t => t.id !== taskId)
+            }
+          }
+          return board
+        }))
+
+        // Reload board data to get latest activities
+        await loadBoardData(currentBoardId)
+      } catch (error) {
+        console.error('Failed to delete task:', error)
+        setError('Failed to delete task: ' + error.message)
+      } finally {
+        setLoading(false)
+      }
     }
   }
 
@@ -457,72 +456,49 @@ function App() {
    * @param {string} taskId - ID of the task being moved
    * @param {string} newStatus - New status (column ID)
    */
-  const handleTaskMove = (taskId, newStatus) => {
+  /**
+   * Handles task movement between columns
+   * Phase 8: Use API for task updates
+   */
+  const handleTaskMove = async (taskId, newStatus) => {
     if (!currentBoard || !currentUser) return
 
     const task = currentBoard.tasks?.find(t => t.id === taskId)
     if (!task) return
 
-    const oldColumn = currentBoard.columns.find(col => col.id === task.status)
-    const newColumn = currentBoard.columns.find(col => col.id === newStatus)
+    try {
+      // Update task status via API
+      const updatedTask = await api.tasks.update(taskId, { status: newStatus })
 
-    updateBoard(currentBoardId, (board) => {
-      const activities = board.activities || []
-      const activity = createActivityEntry(
-        currentUser.id,
-        currentUser.name,
-        'moved',
-        'task',
-        taskId,
-        task.title,
-        {
-          from: oldColumn?.title || task.status,
-          to: newColumn?.title || newStatus
-        }
-      )
-      
-      // Phase 7: Process automations for task-moved trigger
-      let updatedTask = {
-        ...task,
-        status: newStatus
-      }
+      // Phase 7: Process automations (client-side for now)
       const automationResult = processAutomations('task-moved', {
         task: updatedTask,
         oldStatus: task.status,
         newStatus
       }, currentBoardId)
-      if (automationResult.updatedTask) {
-        updatedTask = automationResult.updatedTask
+
+      // If automation changed the task, update again
+      if (automationResult.updatedTask && automationResult.updatedTask.id === taskId) {
+        await api.tasks.update(taskId, automationResult.updatedTask)
       }
-      
-      // Process automation notifications
-      automationResult.notifications.forEach(notif => {
-        if (notif.userId) {
-          const userNotifications = loadNotifications(notif.userId)
-          const notification = createNotification(
-            notif.userId,
-            notif.type || 'automation',
-            'Automation',
-            notif.message,
-            taskId
-          )
-          saveNotifications(notif.userId, [...userNotifications, notification])
+
+      // Update local state
+      setBoards(prevBoards => prevBoards.map(board => {
+        if (board.id === currentBoardId) {
+          return {
+            ...board,
+            tasks: (board.tasks || []).map(t => t.id === taskId ? updatedTask : t)
+          }
         }
-      })
-      
-      return {
-        ...board,
-        tasks: (board.tasks || []).map(t =>
-          t.id === taskId
-            ? {
-                ...updatedTask,
-                updatedAt: new Date().toISOString()
-              }
-            : t
-        ),
-        activities: [...activities, activity]
-      }
-    })
+        return board
+      }))
+
+      // Reload board data to get latest activities
+      await loadBoardData(currentBoardId)
+    } catch (error) {
+      console.error('Failed to move task:', error)
+      setError('Failed to move task: ' + error.message)
+    }
   }
 
   /**
@@ -541,31 +517,33 @@ function App() {
    * Handles board creation
    * @param {Object} newBoard - New board object
    */
-  const handleCreateBoard = (newBoard) => {
-    const boardWithId = {
-      ...newBoard,
-      id: generateBoardId(),
-      ownerId: currentUser?.id || null,
-      activities: [],
-      sharedUsers: []
+  /**
+   * Handles board creation
+   * Phase 8: Use API for board creation
+   */
+  const handleCreateBoard = async (newBoard) => {
+    if (!currentUser) return
+
+    setLoading(true)
+    try {
+      const createdBoard = await api.boards.create({
+        name: newBoard.name,
+        description: newBoard.description,
+        columns: newBoard.columns
+      })
+
+      // Update local state
+      const boardWithOwner = { ...createdBoard, ownerId: createdBoard.owner_id, activities: [], sharedUsers: [] }
+      setBoards(prevBoards => [...prevBoards, boardWithOwner])
+      setCurrentBoardId(createdBoard.id)
+      localStorage.setItem('current_board_id', createdBoard.id)
+      setIsBoardFormOpen(false)
+    } catch (error) {
+      console.error('Failed to create board:', error)
+      setError('Failed to create board: ' + error.message)
+    } finally {
+      setLoading(false)
     }
-    
-    // Add activity log entry
-    if (currentUser) {
-      const activity = createActivityEntry(
-        currentUser.id,
-        currentUser.name,
-        'created',
-        'board',
-        boardWithId.id,
-        boardWithId.name
-      )
-      boardWithId.activities = [activity]
-    }
-    
-    setBoards(prevBoards => [...prevBoards, boardWithId])
-    setCurrentBoardId(boardWithId.id)
-    setIsBoardFormOpen(false)
   }
 
   /**
@@ -725,74 +703,67 @@ function App() {
 
   /**
    * Phase 5: Handles user login
+   * Phase 8: User is already set by LoginForm via API
    */
   const handleLogin = (user) => {
     setCurrentUser(user)
-    // Reload boards after login
-    const loadedBoards = loadBoards()
-    const accessibleBoards = loadedBoards.filter(board => {
-      if (board.ownerId === user.id) return true
-      if (board.sharedUsers && board.sharedUsers.some(su => su.userId === user.id)) return true
-      if (!board.ownerId) {
-        board.ownerId = user.id
-        return true
-      }
-      return false
-    })
-    setBoards(accessibleBoards)
-    if (accessibleBoards.length > 0) {
-      setCurrentBoardId(accessibleBoards[0].id)
-      saveCurrentBoard(accessibleBoards[0].id)
-    }
+    setCurrentUser(user) // Also update stored user
+    // Boards will be loaded by useEffect when currentUser changes
   }
 
   /**
    * Phase 5: Handles user logout
+   * Phase 8: Clear API token
    */
   const handleLogout = () => {
+    authAPI.logout()
     setCurrentUser(null)
     setBoards([])
     setCurrentBoardId(null)
+    localStorage.removeItem('current_board_id')
   }
 
   /**
    * Phase 5: Handles user profile update
+   * Phase 8: Use API for user updates
    */
-  const handleUserUpdate = (updatedUser) => {
-    setCurrentUser(updatedUser)
+  const handleUserUpdate = async (updatedUser) => {
+    try {
+      const user = await api.users.update(updatedUser)
+      setCurrentUser(user)
+      setCurrentUser(user) // Update stored user
+    } catch (error) {
+      console.error('Failed to update user:', error)
+      setError('Failed to update user profile')
+    }
   }
 
   /**
    * Phase 5: Handles board sharing
+   * Phase 8: Use API for board sharing
    */
-  const handleBoardShare = (updatedBoard) => {
-    updateBoard(currentBoardId, () => updatedBoard)
-    
-    // Create notifications for newly shared users
-    if (currentUser && updatedBoard.sharedUsers) {
-      updatedBoard.sharedUsers.forEach(sharedUser => {
-        const notification = createNotification(
-          sharedUser.userId,
-          'board_shared',
-          'Board Shared',
-          `${currentUser.name} shared board "${updatedBoard.name}" with you`,
-          updatedBoard.id,
-          { permission: sharedUser.permission }
-        )
-        const userNotifications = loadNotifications(sharedUser.userId)
-        saveNotifications(sharedUser.userId, [...userNotifications, notification])
-      })
+  const handleBoardShare = async (updatedBoard) => {
+    try {
+      // Share/unshare operations are handled by BoardSharing component via API
+      // Just reload board data
+      await loadBoardData(currentBoardId)
+    } catch (error) {
+      console.error('Failed to update board sharing:', error)
+      setError('Failed to update board sharing')
     }
   }
 
   /**
    * Phase 5: Update board activities when board changes
+   * Phase 8: Load activities from API
    */
   useEffect(() => {
-    if (currentBoard) {
-      setBoardActivities(currentBoard.activities || [])
+    if (currentBoardId && currentUser) {
+      api.activities.getByBoard(currentBoardId)
+        .then(activities => setBoardActivities(activities))
+        .catch(err => console.error('Failed to load activities:', err))
     }
-  }, [currentBoard])
+  }, [currentBoardId, currentUser])
 
   /**
    * Phase 5: Get user's permission for current board
@@ -874,8 +845,19 @@ function App() {
     return <LoginForm onLogin={handleLogin} />
   }
 
+  // Show loading state
+  if (loading && boards.length === 0) {
+    return (
+      <div className="app">
+        <div className="app-content">
+          <LoadingSpinner message="Loading your boards..." size="large" />
+        </div>
+      </div>
+    )
+  }
+
   // Show message if no boards exist
-  if (boards.length === 0 && currentUser) {
+  if (boards.length === 0 && currentUser && !loading) {
     return (
       <div className="app">
         <header className="app-header">
@@ -929,6 +911,31 @@ function App() {
 
   return (
     <div className="app">
+      {/* Error banner */}
+      {error && (
+        <div className="error-banner" onClick={() => setError(null)}>
+          <span className="error-icon">⚠️</span>
+          <span className="error-text">{error}</span>
+          <button 
+            className="error-dismiss" 
+            onClick={(e) => {
+              e.stopPropagation()
+              setError(null)
+            }}
+            aria-label="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Loading overlay */}
+      {loading && (
+        <div className="loading-overlay">
+          <LoadingSpinner message="Processing..." size="medium" />
+        </div>
+      )}
+
       {/* App header */}
       <header className="app-header">
         <div className="app-header-left">
@@ -1193,6 +1200,7 @@ function App() {
         onClose={() => setIsBoardSharingOpen(false)}
         board={currentBoard}
         currentUser={currentUser}
+        users={allUsers}
         onShare={handleBoardShare}
       />
 

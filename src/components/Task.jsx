@@ -257,25 +257,31 @@ const Task = ({ task, onEdit, onDelete, isSelected = false, onToggleSelect, user
       )}
       
       {/* Action buttons container */}
-      <div className="task-actions">
-        {/* Edit button - opens edit modal */}
-        <button 
-          className="btn-edit"
-          onClick={() => onEdit(task)}
-          aria-label={`Edit task: ${task.title}`}
-        >
-          Edit
-        </button>
-        
-        {/* Delete button - removes task */}
-        <button 
-          className="btn-delete"
-          onClick={() => onDelete(task.id)}
-          aria-label={`Delete task: ${task.title}`}
-        >
-          Delete
-        </button>
-      </div>
+      {(onEdit || onDelete) && (
+        <div className="task-actions">
+          {/* Edit button - opens edit modal */}
+          {onEdit && (
+            <button 
+              className="btn-edit"
+              onClick={() => onEdit(task)}
+              aria-label={`Edit task: ${task.title}`}
+            >
+              Edit
+            </button>
+          )}
+          
+          {/* Delete button - removes task */}
+          {onDelete && (
+            <button 
+              className="btn-delete"
+              onClick={() => onDelete(task.id)}
+              aria-label={`Delete task: ${task.title}`}
+            >
+              Delete
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

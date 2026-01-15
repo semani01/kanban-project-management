@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import api from '../services/api'
 import {
-  loadSavedFilters,
-  saveSavedFilters,
-  createSavedFilter,
   applyFilter,
   validateSavedFilter
 } from '../utils/advancedSearch'
@@ -44,7 +42,9 @@ const AdvancedSearch = ({ isOpen, onClose, onApplyFilter, tasks = [], users = []
   // Load saved filters on mount
   useEffect(() => {
     if (isOpen) {
-      setSavedFilters(loadSavedFilters())
+      api.filters.getAll()
+        .then(filters => setSavedFilters(filters))
+        .catch(err => console.error('Failed to load filters:', err))
     }
   }, [isOpen])
 
@@ -80,27 +80,28 @@ const AdvancedSearch = ({ isOpen, onClose, onApplyFilter, tasks = [], users = []
   }
 
   // Handle save filter
-  const handleSaveFilter = (e) => {
+  const handleSaveFilter = async (e) => {
     e.preventDefault()
 
-    const filter = editingFilter
-      ? { ...editingFilter, ...filterData, updatedAt: new Date().toISOString() }
-      : createSavedFilter(filterData)
-
-    const validation = validateSavedFilter(filter)
+    const validation = validateSavedFilter(filterData)
     if (!validation.valid) {
       setErrors({ form: validation.errors.join(', ') })
       return
     }
 
-    const allFilters = loadSavedFilters()
-    const updatedFilters = editingFilter
-      ? allFilters.map(f => f.id === editingFilter.id ? filter : f)
-      : [...allFilters, filter]
-
-    saveSavedFilters(updatedFilters)
-    setSavedFilters(updatedFilters)
-    handleReset()
+    try {
+      if (editingFilter) {
+        await api.filters.update(editingFilter.id, { filterData })
+      } else {
+        await api.filters.create({ name: filterData.name, description: filterData.description, filterData })
+      }
+      // Reload filters
+      const loadedFilters = await api.filters.getAll()
+      setSavedFilters(loadedFilters)
+      handleReset()
+    } catch (error) {
+      setErrors({ form: error.message || 'Failed to save filter' })
+    }
   }
 
   // Apply a saved filter
@@ -113,12 +114,15 @@ const AdvancedSearch = ({ isOpen, onClose, onApplyFilter, tasks = [], users = []
   }
 
   // Delete a saved filter
-  const handleDeleteFilter = (filterId) => {
+  const handleDeleteFilter = async (filterId) => {
     if (window.confirm('Are you sure you want to delete this saved filter?')) {
-      const allFilters = loadSavedFilters()
-      const updatedFilters = allFilters.filter(f => f.id !== filterId)
-      saveSavedFilters(updatedFilters)
-      setSavedFilters(updatedFilters)
+      try {
+        await api.filters.delete(filterId)
+        const loadedFilters = await api.filters.getAll()
+        setSavedFilters(loadedFilters)
+      } catch (error) {
+        alert('Failed to delete filter: ' + error.message)
+      }
     }
   }
 

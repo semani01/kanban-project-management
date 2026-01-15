@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { getUnreadCount } from '../utils/notifications'
+import api from '../services/api'
 
 /**
  * NotificationButton Component
@@ -13,11 +13,18 @@ const NotificationButton = ({ userId, onClick }) => {
 
   useEffect(() => {
     if (userId) {
-      setUnreadCount(getUnreadCount(userId))
+      // Load initial count
+      api.notifications.getUnreadCount()
+        .then(result => setUnreadCount(result.count || 0))
+        .catch(err => console.error('Failed to load unread count:', err))
+      
       // Update count periodically
       const interval = setInterval(() => {
-        setUnreadCount(getUnreadCount(userId))
-      }, 5000)
+        api.notifications.getUnreadCount()
+          .then(result => setUnreadCount(result.count || 0))
+          .catch(err => console.error('Failed to load unread count:', err))
+      }, 5000) // Check every 5 seconds
+      
       return () => clearInterval(interval)
     }
   }, [userId])

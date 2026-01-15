@@ -1,6 +1,6 @@
 # Kanban Project Management App
 
-A modern, interactive Kanban board application built with React for managing tasks and projects.
+A modern, interactive Kanban board application built with React and Node.js for managing tasks and projects.
 
 ## Features
 
@@ -8,7 +8,9 @@ A modern, interactive Kanban board application built with React for managing tas
 - **Drag and Drop**: Intuitive drag-and-drop functionality to move tasks between columns
 - **Task Management**: Create, edit, and delete tasks with full CRUD operations
 - **Priority Levels**: Assign priority levels (High, Medium, Low) with color-coded indicators
-- **Data Persistence**: All tasks are automatically saved to browser localStorage
+- **Backend API**: RESTful API with Express.js and SQLite database
+- **User Authentication**: JWT-based authentication system
+- **Board Sharing**: Share boards with other users with permission levels
 - **Modern UI**: Clean, responsive design with smooth animations
 
 ## Getting Started
@@ -20,17 +22,37 @@ A modern, interactive Kanban board application built with React for managing tas
 
 ### Installation
 
-1. Install dependencies:
+1. Install frontend dependencies:
 ```bash
 npm install
 ```
 
-2. Start the development server:
+2. Install and initialize backend:
 ```bash
-npm run dev
+npm run server:init
 ```
 
-3. Open your browser and navigate to `http://localhost:5173`
+3. Start both frontend and backend:
+```bash
+npm run dev:full
+```
+
+Or start them separately:
+```bash
+# Terminal 1: Frontend
+npm run dev
+
+# Terminal 2: Backend
+npm run server:dev
+```
+
+4. Open your browser and navigate to `http://localhost:5173`
+
+### Environment Setup
+
+1. Copy `.env.example` to `.env` in the root directory
+2. Copy `server/.env.example` to `server/.env`
+3. Update environment variables as needed
 
 ### Building for Production
 

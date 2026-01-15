@@ -37,18 +37,29 @@ const ActivityLog = ({ activities = [], users = [], isOpen, onClose }) => {
           ) : (
             <div className="activity-log-list">
               {activities.map(activity => {
-                const user = getUserForActivity(activity.userId)
+                // Ensure activity has required fields with defaults
+                const safeActivity = {
+                  id: activity.id || `activity-${Date.now()}`,
+                  userId: activity.userId || activity.user_id,
+                  userName: activity.userName || activity.user_name || 'Unknown User',
+                  action: activity.action || 'unknown',
+                  entityType: activity.entityType || activity.entity_type || 'item',
+                  entityName: activity.entityName || activity.entity_name || 'unnamed',
+                  details: activity.details || activity.metadata || {},
+                  timestamp: activity.timestamp || activity.created_at || new Date().toISOString()
+                }
+                const user = getUserForActivity(safeActivity.userId)
                 return (
-                  <div key={activity.id} className="activity-item">
+                  <div key={safeActivity.id} className="activity-item">
                     <div className="activity-avatar">
                       <UserAvatar user={user} size={32} />
                     </div>
                     <div className="activity-content">
                       <div className="activity-message">
-                        {formatActivityMessage(activity)}
+                        {formatActivityMessage(safeActivity)}
                       </div>
                       <div className="activity-time">
-                        {formatActivityTime(activity.timestamp)}
+                        {formatActivityTime(safeActivity.timestamp)}
                       </div>
                     </div>
                   </div>

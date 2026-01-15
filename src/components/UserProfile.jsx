@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import UserAvatar from './UserAvatar'
-import { loadUsers, saveUsers, clearCurrentUser } from '../utils/userStorage'
+import api from '../services/api'
 
 /**
  * UserProfile Component
@@ -24,27 +24,27 @@ const UserProfile = ({ currentUser, onLogout, onUpdate }) => {
    * Handles logout
    */
   const handleLogout = () => {
-    clearCurrentUser()
     onLogout()
   }
 
   /**
    * Handles profile update
+   * Phase 8: Use API for user updates
    */
-  const handleUpdate = (e) => {
+  const handleUpdate = async (e) => {
     e.preventDefault()
     
-    const users = loadUsers()
-    const updatedUsers = users.map(user =>
-      user.id === currentUser.id
-        ? { ...user, name: formData.name.trim(), email: formData.email.trim().toLowerCase() }
-        : user
-    )
-    
-    saveUsers(updatedUsers)
-    const updatedUser = updatedUsers.find(u => u.id === currentUser.id)
-    onUpdate(updatedUser)
-    setIsEditing(false)
+    try {
+      const updatedUser = await api.users.update({
+        name: formData.name.trim(),
+        email: formData.email.trim().toLowerCase()
+      })
+      onUpdate(updatedUser)
+      setIsEditing(false)
+    } catch (error) {
+      console.error('Failed to update profile:', error)
+      alert('Failed to update profile: ' + error.message)
+    }
   }
 
   return (

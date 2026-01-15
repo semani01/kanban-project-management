@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import api from '../services/api'
 import {
-  loadRecurringTasks,
-  saveRecurringTasks,
-  createRecurringTaskTemplate,
   formatRecurrence,
   RECURRENCE_TYPES
 } from '../utils/recurringTasks'
@@ -47,11 +45,9 @@ const RecurringTasks = ({ isOpen, onClose, boardId, users = [] }) => {
   // Load templates on mount
   useEffect(() => {
     if (isOpen) {
-      const loadedTemplates = loadRecurringTasks()
-      const boardTemplates = boardId
-        ? loadedTemplates.filter(t => !t.boardId || t.boardId === boardId)
-        : loadedTemplates
-      setTemplates(boardTemplates)
+      api.recurring.getAll(boardId)
+        .then(loadedTemplates => setTemplates(loadedTemplates))
+        .catch(err => console.error('Failed to load recurring tasks:', err))
     }
   }, [isOpen, boardId])
 
@@ -111,7 +107,7 @@ const RecurringTasks = ({ isOpen, onClose, boardId, users = [] }) => {
   }
 
   // Handle form submission
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
 
     if (!formData.name.trim()) {
@@ -129,18 +125,19 @@ const RecurringTasks = ({ isOpen, onClose, boardId, users = [] }) => {
       boardId: boardId || null
     }
 
-    const template = editingTemplate
-      ? { ...editingTemplate, ...templateData, updatedAt: new Date().toISOString() }
-      : createRecurringTaskTemplate(templateData)
-
-    const allTemplates = loadRecurringTasks()
-    const updatedTemplates = editingTemplate
-      ? allTemplates.map(t => t.id === editingTemplate.id ? template : t)
-      : [...allTemplates, template]
-
-    saveRecurringTasks(updatedTemplates)
-    setTemplates(updatedTemplates.filter(t => !boardId || !t.boardId || t.boardId === boardId))
-    handleReset()
+    try {
+      if (editingTemplate) {
+        await api.recurring.update(editingTemplate.id, templateData)
+      } else {
+        await api.recurring.create(templateData)
+      }
+      // Reload templates
+      const loadedTemplates = await api.recurring.getAll(boardId)
+      setTemplates(loadedTemplates)
+      handleReset()
+    } catch (error) {
+      setErrors({ form: error.message || 'Failed to save recurring task template' })
+    }
   }
 
   // Reset form
@@ -183,23 +180,30 @@ const RecurringTasks = ({ isOpen, onClose, boardId, users = [] }) => {
   }
 
   // Delete a template
-  const handleDelete = (templateId) => {
+  const handleDelete = async (templateId) => {
     if (window.confirm('Are you sure you want to delete this recurring task template?')) {
-      const allTemplates = loadRecurringTasks()
-      const updatedTemplates = allTemplates.filter(t => t.id !== templateId)
-      saveRecurringTasks(updatedTemplates)
-      setTemplates(updatedTemplates.filter(t => !boardId || !t.boardId || t.boardId === boardId))
+      try {
+        await api.recurring.delete(templateId)
+        const loadedTemplates = await api.recurring.getAll(boardId)
+        setTemplates(loadedTemplates)
+      } catch (error) {
+        alert('Failed to delete template: ' + error.message)
+      }
     }
   }
 
   // Toggle template enabled state
-  const handleToggleEnabled = (templateId) => {
-    const allTemplates = loadRecurringTasks()
-    const updatedTemplates = allTemplates.map(t =>
-      t.id === templateId ? { ...t, enabled: !t.enabled, updatedAt: new Date().toISOString() } : t
-    )
-    saveRecurringTasks(updatedTemplates)
-    setTemplates(updatedTemplates.filter(t => !boardId || !t.boardId || t.boardId === boardId))
+  const handleToggleEnabled = async (templateId) => {
+    try {
+      const template = templates.find(t => t.id === templateId)
+      if (template) {
+        await api.recurring.update(templateId, { enabled: !template.enabled })
+        const loadedTemplates = await api.recurring.getAll(boardId)
+        setTemplates(loadedTemplates)
+      }
+    } catch (error) {
+      console.error('Failed to toggle template:', error)
+    }
   }
 
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']

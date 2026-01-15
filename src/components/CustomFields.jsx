@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import api from '../services/api'
 import {
-  loadCustomFields,
-  saveCustomFields,
-  createCustomField,
   FIELD_TYPES
 } from '../utils/customFields'
 
@@ -34,7 +32,9 @@ const CustomFields = ({ isOpen, onClose, boardId }) => {
   // Load fields on mount
   useEffect(() => {
     if (isOpen) {
-      setFields(loadCustomFields(boardId))
+      api.customFields.getAll(boardId)
+        .then(loadedFields => setFields(loadedFields))
+        .catch(err => console.error('Failed to load custom fields:', err))
     }
   }, [isOpen, boardId])
 
@@ -70,7 +70,7 @@ const CustomFields = ({ isOpen, onClose, boardId }) => {
   }
 
   // Handle form submission
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
 
     if (!formData.name.trim()) {
@@ -86,18 +86,19 @@ const CustomFields = ({ isOpen, onClose, boardId }) => {
         : formData.defaultValue || null
     }
 
-    const field = editingField
-      ? { ...editingField, ...fieldData, updatedAt: new Date().toISOString() }
-      : createCustomField(fieldData)
-
-    const allFields = loadCustomFields()
-    const updatedFields = editingField
-      ? allFields.map(f => f.id === editingField.id ? field : f)
-      : [...allFields, field]
-
-    saveCustomFields(updatedFields)
-    setFields(updatedFields.filter(f => !boardId || !f.boardId || f.boardId === boardId))
-    handleReset()
+    try {
+      if (editingField) {
+        await api.customFields.update(editingField.id, fieldData)
+      } else {
+        await api.customFields.create(fieldData)
+      }
+      // Reload fields
+      const loadedFields = await api.customFields.getAll(boardId)
+      setFields(loadedFields)
+      handleReset()
+    } catch (error) {
+      setErrors({ name: error.message || 'Failed to save custom field' })
+    }
   }
 
   // Reset form
@@ -137,12 +138,15 @@ const CustomFields = ({ isOpen, onClose, boardId }) => {
   }
 
   // Delete a field
-  const handleDelete = (fieldId) => {
+  const handleDelete = async (fieldId) => {
     if (window.confirm('Are you sure you want to delete this custom field? This will remove it from all tasks.')) {
-      const allFields = loadCustomFields()
-      const updatedFields = allFields.filter(f => f.id !== fieldId)
-      saveCustomFields(updatedFields)
-      setFields(updatedFields.filter(f => !boardId || !f.boardId || f.boardId === boardId))
+      try {
+        await api.customFields.delete(fieldId)
+        const loadedFields = await api.customFields.getAll(boardId)
+        setFields(loadedFields)
+      } catch (error) {
+        alert('Failed to delete custom field: ' + error.message)
+      }
     }
   }
 

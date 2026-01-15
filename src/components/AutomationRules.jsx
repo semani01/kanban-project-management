@@ -1,10 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { 
-  loadAutomations, 
-  saveAutomations, 
-  createAutomationRule, 
-  validateAutomationRule 
-} from '../utils/automation'
+import api from '../services/api'
+import { validateAutomationRule } from '../utils/automation'
 import { CATEGORIES } from '../utils/categories'
 import { generateId } from '../utils/storage'
 
@@ -33,12 +29,9 @@ const AutomationRules = ({ isOpen, onClose, boardId, users = [] }) => {
   // Load rules on mount and when board changes
   useEffect(() => {
     if (isOpen) {
-      const loadedRules = loadAutomations()
-      // Filter by board if specified
-      const boardRules = boardId 
-        ? loadedRules.filter(r => !r.boardId || r.boardId === boardId)
-        : loadedRules
-      setRules(boardRules)
+      api.automations.getAll(boardId)
+        .then(loadedRules => setRules(loadedRules))
+        .catch(err => console.error('Failed to load automations:', err))
     }
   }, [isOpen, boardId])
 
@@ -143,7 +136,7 @@ const AutomationRules = ({ isOpen, onClose, boardId, users = [] }) => {
   }
 
   // Handle form submission
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
 
     const ruleData = {
@@ -151,24 +144,25 @@ const AutomationRules = ({ isOpen, onClose, boardId, users = [] }) => {
       boardId: boardId || null
     }
 
-    const rule = editingRule
-      ? { ...editingRule, ...ruleData, updatedAt: new Date().toISOString() }
-      : createAutomationRule(ruleData)
-
-    const validation = validateAutomationRule(rule)
+    const validation = validateAutomationRule(ruleData)
     if (!validation.valid) {
       setErrors({ form: validation.errors.join(', ') })
       return
     }
 
-    const allRules = loadAutomations()
-    const updatedRules = editingRule
-      ? allRules.map(r => r.id === editingRule.id ? rule : r)
-      : [...allRules, rule]
-
-    saveAutomations(updatedRules)
-    setRules(updatedRules.filter(r => !boardId || !r.boardId || r.boardId === boardId))
-    handleReset()
+    try {
+      if (editingRule) {
+        await api.automations.update(editingRule.id, ruleData)
+      } else {
+        await api.automations.create(ruleData)
+      }
+      // Reload rules
+      const loadedRules = await api.automations.getAll(boardId)
+      setRules(loadedRules)
+      handleReset()
+    } catch (error) {
+      setErrors({ form: error.message || 'Failed to save automation rule' })
+    }
   }
 
   // Reset form
@@ -199,23 +193,30 @@ const AutomationRules = ({ isOpen, onClose, boardId, users = [] }) => {
   }
 
   // Delete a rule
-  const handleDelete = (ruleId) => {
+  const handleDelete = async (ruleId) => {
     if (window.confirm('Are you sure you want to delete this automation rule?')) {
-      const allRules = loadAutomations()
-      const updatedRules = allRules.filter(r => r.id !== ruleId)
-      saveAutomations(updatedRules)
-      setRules(updatedRules.filter(r => !boardId || !r.boardId || r.boardId === boardId))
+      try {
+        await api.automations.delete(ruleId)
+        const loadedRules = await api.automations.getAll(boardId)
+        setRules(loadedRules)
+      } catch (error) {
+        alert('Failed to delete automation rule: ' + error.message)
+      }
     }
   }
 
   // Toggle rule enabled state
-  const handleToggleEnabled = (ruleId) => {
-    const allRules = loadAutomations()
-    const updatedRules = allRules.map(r => 
-      r.id === ruleId ? { ...r, enabled: !r.enabled, updatedAt: new Date().toISOString() } : r
-    )
-    saveAutomations(updatedRules)
-    setRules(updatedRules.filter(r => !boardId || !r.boardId || r.boardId === boardId))
+  const handleToggleEnabled = async (ruleId) => {
+    try {
+      const rule = rules.find(r => r.id === ruleId)
+      if (rule) {
+        await api.automations.update(ruleId, { enabled: !rule.enabled })
+        const loadedRules = await api.automations.getAll(boardId)
+        setRules(loadedRules)
+      }
+    } catch (error) {
+      console.error('Failed to toggle automation:', error)
+    }
   }
 
   if (!isOpen) return null

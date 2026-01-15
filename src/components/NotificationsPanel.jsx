@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { loadNotifications as loadNotificationsUtil, markNotificationRead, markAllNotificationsRead, deleteNotification, getUnreadCount } from '../utils/notifications'
+import api from '../services/api'
 
 /**
  * NotificationsPanel Component
@@ -16,22 +16,32 @@ const NotificationsPanel = ({ userId, isOpen, onClose, onNotificationClick }) =>
 
   // Load notifications
   useEffect(() => {
-    if (userId) {
-      const loaded = loadNotificationsUtil(userId)
-      setNotifications(loaded)
-      setUnreadCount(getUnreadCount(userId))
+    if (userId && isOpen) {
+      api.notifications.getAll()
+        .then(loaded => {
+          setNotifications(loaded)
+          return api.notifications.getUnreadCount()
+        })
+        .then(result => setUnreadCount(result.count || 0))
+        .catch(err => console.error('Failed to load notifications:', err))
     }
   }, [userId, isOpen])
 
   /**
    * Handles notification click
+   * Phase 8: Use API
    */
-  const handleNotificationClick = (notification) => {
+  const handleNotificationClick = async (notification) => {
     if (!notification.read) {
-        markNotificationRead(userId, notification.id)
-        const updated = loadNotificationsUtil(userId)
+      try {
+        await api.notifications.markAsRead(notification.id)
+        const updated = await api.notifications.getAll()
         setNotifications(updated)
-        setUnreadCount(getUnreadCount(userId))
+        const countResult = await api.notifications.getUnreadCount()
+        setUnreadCount(countResult.count || 0)
+      } catch (err) {
+        console.error('Failed to mark notification as read:', err)
+      }
     }
     
     if (onNotificationClick) {
@@ -41,12 +51,17 @@ const NotificationsPanel = ({ userId, isOpen, onClose, onNotificationClick }) =>
 
   /**
    * Marks all as read
+   * Phase 8: Use API
    */
-  const handleMarkAllRead = () => {
-    markAllNotificationsRead(userId)
-    const updated = loadNotificationsUtil(userId)
-    setNotifications(updated)
-    setUnreadCount(getUnreadCount(userId))
+  const handleMarkAllRead = async () => {
+    try {
+      await api.notifications.markAllAsRead()
+      const updated = await api.notifications.getAll()
+      setNotifications(updated)
+      setUnreadCount(0)
+    } catch (err) {
+      console.error('Failed to mark all as read:', err)
+    }
   }
 
   /**

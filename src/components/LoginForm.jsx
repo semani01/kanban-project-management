@@ -1,6 +1,5 @@
 import React, { useState } from 'react'
-import { loadUsers, saveUsers, generateUserId, generateAvatarColor, getUserInitials } from '../utils/userStorage'
-import { saveCurrentUser } from '../utils/userStorage'
+import { authAPI, setAuthToken, setCurrentUser } from '../services/api'
 
 /**
  * LoginForm Component
@@ -17,6 +16,7 @@ const LoginForm = ({ onLogin }) => {
     confirmPassword: ''
   })
   const [errors, setErrors] = useState({})
+  const [loading, setLoading] = useState(false)
 
   /**
    * Handles form input changes
@@ -42,7 +42,8 @@ const LoginForm = ({ onLogin }) => {
   const validate = () => {
     const newErrors = {}
 
-    if (!formData.name.trim()) {
+    // Only validate name for signup
+    if (isSignup && !formData.name.trim()) {
       newErrors.name = 'Name is required'
     }
 
@@ -65,73 +66,139 @@ const LoginForm = ({ onLogin }) => {
     }
 
     setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
+    const isValid = Object.keys(newErrors).length === 0
+    console.log('Validation result:', { isValid, errors: newErrors, isSignup })
+    return isValid
   }
 
   /**
    * Handles login
    */
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault()
+    console.log('Login form submitted', { email: formData.email })
 
     if (!validate()) {
+      console.log('Validation failed')
       return
     }
 
-    const users = loadUsers()
-    const user = users.find(u => u.email === formData.email)
-
-    if (!user) {
-      setErrors({ email: 'User not found' })
-      return
+    console.log('Starting login request...')
+    setLoading(true)
+    setErrors({})
+    
+    try {
+      console.log('Calling authAPI.login...')
+      const response = await authAPI.login(formData.email, formData.password)
+      console.log('Login response:', response)
+      
+      if (response && response.user) {
+        console.log('Login successful, calling onLogin')
+        onLogin(response.user)
+      } else {
+        console.error('Invalid response:', response)
+        throw new Error('Invalid response from server')
+      }
+    } catch (error) {
+      console.error('Login error caught:', error)
+      console.error('Error type:', typeof error)
+      console.error('Error details:', {
+        message: error.message,
+        error: error.error,
+        name: error.name,
+        stack: error.stack
+      })
+      
+      // Handle different error formats from API
+      let errorMessage = 'Login failed. Please check your email and password.'
+      
+      if (error.message) {
+        errorMessage = error.message
+      } else if (error.error) {
+        errorMessage = error.error
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      }
+      
+      console.log('Setting error message:', errorMessage)
+      // Always set form error to display
+      setErrors({ 
+        form: errorMessage,
+        email: errorMessage.toLowerCase().includes('email') ? errorMessage : '',
+        password: errorMessage.toLowerCase().includes('password') || errorMessage.toLowerCase().includes('invalid') ? errorMessage : ''
+      })
+    } finally {
+      console.log('Login attempt finished, setting loading to false')
+      setLoading(false)
     }
-
-    // Simple password check (in production, use proper hashing)
-    if (user.password !== formData.password) {
-      setErrors({ password: 'Incorrect password' })
-      return
-    }
-
-    // Save current user and call onLogin
-    saveCurrentUser(user)
-    onLogin(user)
   }
 
   /**
    * Handles signup
+   * Phase 8: Use API for user registration
    */
-  const handleSignup = (e) => {
+  const handleSignup = async (e) => {
     e.preventDefault()
 
     if (!validate()) {
       return
     }
 
-    const users = loadUsers()
-    
-    // Check if email already exists
-    if (users.find(u => u.email === formData.email)) {
-      setErrors({ email: 'Email already registered' })
-      return
+    setLoading(true)
+    setErrors({})
+    try {
+      const response = await authAPI.register({
+        name: formData.name.trim(),
+        email: formData.email.trim().toLowerCase(),
+        password: formData.password
+      })
+      onLogin(response.user)
+    } catch (error) {
+      console.error('Signup error:', error)
+      // Handle different error formats from API
+      let errorMessage = 'Registration failed'
+      if (error.message) {
+        errorMessage = error.message
+      } else if (error.error) {
+        errorMessage = error.error
+      }
+      
+      // Check for specific error types
+      const lowerMessage = errorMessage.toLowerCase()
+      if (lowerMessage.includes('email') || lowerMessage.includes('already exists')) {
+        setErrors({ 
+          email: errorMessage,
+          form: errorMessage
+        })
+      } else if (lowerMessage.includes('password')) {
+        setErrors({ 
+          password: errorMessage,
+          form: errorMessage
+        })
+      } else if (error.errors && Array.isArray(error.errors)) {
+        // Handle validation errors array
+        const validationErrors = {}
+        error.errors.forEach(err => {
+          if (err.param === 'email') {
+            validationErrors.email = err.msg
+          } else if (err.param === 'password') {
+            validationErrors.password = err.msg
+          } else if (err.param === 'name') {
+            validationErrors.name = err.msg
+          }
+        })
+        setErrors({
+          ...validationErrors,
+          form: errorMessage
+        })
+      } else {
+        setErrors({ 
+          form: errorMessage
+        })
+      }
+    } finally {
+      setLoading(false)
     }
-
-    // Create new user
-    const userId = generateUserId()
-    const newUser = {
-      id: userId,
-      name: formData.name.trim(),
-      email: formData.email.trim().toLowerCase(),
-      password: formData.password, // In production, hash this
-      avatarColor: generateAvatarColor(userId),
-      initials: getUserInitials(formData.name),
-      createdAt: new Date().toISOString()
-    }
-
-    // Save user
-    users.push(newUser)
-    saveUsers(users)
-    saveCurrentUser(newUser)
-    onLogin(newUser)
   }
 
   return (
@@ -142,7 +209,27 @@ const LoginForm = ({ onLogin }) => {
           <p>{isSignup ? 'Create an account' : 'Sign in to your account'}</p>
         </div>
 
-        <form onSubmit={isSignup ? handleSignup : handleLogin} className="login-form">
+        <form 
+          onSubmit={(e) => {
+            console.log('Form onSubmit triggered', { isSignup })
+            e.preventDefault()
+            if (isSignup) {
+              handleSignup(e)
+            } else {
+              handleLogin(e)
+            }
+          }} 
+          className="login-form" 
+          noValidate
+        >
+          {/* Form-level error message */}
+          {(errors.form || errors.email || errors.password) && (
+            <div className="form-error-banner">
+              <span className="error-icon">⚠️</span>
+              <span>{errors.form || errors.email || errors.password || 'An error occurred'}</span>
+            </div>
+          )}
+          
           {/* Name field (signup only) */}
           {isSignup && (
             <div className="form-group">
@@ -210,9 +297,24 @@ const LoginForm = ({ onLogin }) => {
           )}
 
           {/* Submit button */}
-          <button type="submit" className="btn-login">
-            {isSignup ? 'Sign Up' : 'Sign In'}
+          <button 
+            type="submit" 
+            className="btn-login" 
+            disabled={loading}
+            onClick={(e) => {
+              console.log('Button clicked!', { isSignup, loading })
+              // Let the form onSubmit handle it
+            }}
+          >
+            {loading ? 'Please wait...' : (isSignup ? 'Sign Up' : 'Sign In')}
           </button>
+          
+          {/* Debug: Show loading state */}
+          {loading && (
+            <div style={{ textAlign: 'center', marginTop: '1rem', color: 'var(--text-secondary)' }}>
+              Processing...
+            </div>
+          )}
         </form>
 
         {/* Toggle between login and signup */}
@@ -226,7 +328,9 @@ const LoginForm = ({ onLogin }) => {
                 setIsSignup(!isSignup)
                 setFormData({ name: '', email: '', password: '', confirmPassword: '' })
                 setErrors({})
+                setLoading(false)
               }}
+              disabled={loading}
             >
               {isSignup ? 'Sign In' : 'Sign Up'}
             </button>

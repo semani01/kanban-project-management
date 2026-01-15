@@ -49,15 +49,17 @@ export const formatActivityMessage = (activity) => {
   }
   
   const verb = actionVerbs[action] || action
-  let message = `${userName} ${verb} ${entityType} "${entityName}"`
+  let message = `${userName || 'Someone'} ${verb} ${entityType || 'item'} "${entityName || 'unnamed'}"`
   
-  // Add details if available
-  if (details.from && details.to) {
-    message += ` from "${details.from}" to "${details.to}"`
-  } else if (details.to) {
-    message += ` to "${details.to}"`
-  } else if (details.assignedTo) {
-    message += ` to ${details.assignedTo}`
+  // Add details if available (with null check)
+  if (details && typeof details === 'object') {
+    if (details.from && details.to) {
+      message += ` from "${details.from}" to "${details.to}"`
+    } else if (details.to) {
+      message += ` to "${details.to}"`
+    } else if (details.assignedTo) {
+      message += ` to ${details.assignedTo}`
+    }
   }
   
   return message
